@@ -19,7 +19,10 @@ const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const app    = express();
 const server = http.createServer(app);
 
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+}));
 app.use(express.json());
 
 // Health check
