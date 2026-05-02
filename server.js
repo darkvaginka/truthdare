@@ -119,7 +119,13 @@ function roomPublicState(room) {
 /* ============================================
    WEBSOCKET SERVER
 ============================================ */
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ 
+  server,
+  verifyClient: (info) => {
+    // Allow all origins
+    return true;
+  }
+});
 
 wss.on('connection', (ws) => {
   ws.clientId = crypto.randomUUID();
