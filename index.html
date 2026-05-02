@@ -4857,24 +4857,24 @@ function pickType(type) {
 
 function skipTurn() {
   toast(t('toast-skip'));
-  if (WS_URL) {
-    wsSend({ type: 'task_result', result: 'skip' });
-  } else {
+  if (_isDemoMode || !state.roomCode) {
     const p = GAME.players[GAME.currentIdx];
     p.score -= 1; GAME.scores[p.name] = p.score;
     advanceTurn();
+  } else {
+    wsSend({ type: 'task_result', result: 'skip' });
   }
 }
 
 function penaltyDone() {
   document.getElementById('penaltyModal')?.classList.remove('open');
   toast('💪 ' + (lang==='ru'?'Наказание принято!':'Penalty completed!'));
-  if (WS_URL) {
-    wsSend({ type: 'task_result', result: 'refuse' });
-  } else {
+  if (_isDemoMode || !state.roomCode) {
     const p = GAME.players[GAME.currentIdx];
     p.score -= 1; GAME.scores[p.name] = p.score;
-    _afterAction();
+    advanceTurn();
+  } else {
+    wsSend({ type: 'task_result', result: 'refuse' });
   }
 }
 
@@ -4934,20 +4934,20 @@ function rerollCard() {
 function completeTask() {
   haptic('success');
   toast(t('toast-complete'));
-  // Update streak for 2t1d
   if (_gameMode === '2t1d') {
     if (GAME.currentType === 'truth') {
       _playerTruthStreak[GAME.currentIdx] = (_playerTruthStreak[GAME.currentIdx] || 0) + 1;
     } else {
-      _playerTruthStreak[GAME.currentIdx] = 0; // dare resets streak
+      _playerTruthStreak[GAME.currentIdx] = 0;
     }
   }
-  if (WS_URL) {
-    wsSend({ type: 'task_result', result: 'complete' });
-  } else {
+  // Demo mode or no server room — use local logic
+  if (_isDemoMode || !state.roomCode) {
     const p = GAME.players[GAME.currentIdx];
     p.score += 2; GAME.scores[p.name] = p.score;
     advanceTurn();
+  } else {
+    wsSend({ type: 'task_result', result: 'complete' });
   }
 }
 
@@ -4957,13 +4957,12 @@ function refuseTask() {
     showPenaltyModal(GAME.players[GAME.currentIdx]);
   } else {
     toast(t('toast-refuse'));
-    // Refusing doesn't change the streak — player didn't complete anything
-    if (WS_URL) {
-      wsSend({ type: 'task_result', result: 'refuse' });
-    } else {
+    if (_isDemoMode || !state.roomCode) {
       const p = GAME.players[GAME.currentIdx];
       p.score -= 1; GAME.scores[p.name] = p.score;
       advanceTurn();
+    } else {
+      wsSend({ type: 'task_result', result: 'refuse' });
     }
   }
 }
