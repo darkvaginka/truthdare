@@ -2258,7 +2258,8 @@ function wsConnect(onOpen) {
   }
   _ws = new WebSocket(WS_URL);
   _ws.onopen = () => {
-    console.log('[WS] Connected');
+    console.log('[WS] Connected to', WS_URL);
+    toast(lang==='ru'?'🟢 Сервер подключён':'🟢 Server connected', 1500);
     if (onOpen) onOpen();
   };
   _ws.onmessage = (e) => {
@@ -2269,7 +2270,10 @@ function wsConnect(onOpen) {
     console.log('[WS] Disconnected — reconnecting...');
     _wsReconnectTimer = setTimeout(() => wsConnect(), 3000);
   };
-  _ws.onerror = (e) => console.error('[WS] Error', e);
+  _ws.onerror = (e) => {
+    console.error('[WS] Error', e);
+    toast(lang==='ru'?'❌ Ошибка подключения к серверу':'❌ Server connection error');
+  };
 }
 
 function wsSend(msg) {
@@ -2460,24 +2464,10 @@ function createRoom() {
     renderLobbySlots();
     updateLobbyStart();
     go('s-lobby');
-    // Demo: simulate guests only when no real server
-    if (!WS_URL) {
-      setTimeout(() => simulateGuestJoin(lang==='ru'?'Алекс':'Alex'), 2000);
-      setTimeout(() => simulateGuestJoin(lang==='ru'?'Маша':'Mary'), 4500);
-    }
   }
 }
 
-function simulateGuestJoin(name) {
-  if (GAME.players.length >= _maxPlayers) return;
-  const avatar = AVATARS[GAME.players.length % AVATARS.length];
-  GAME.players.push({ id: name, name, avatar, score: 0 });
-  GAME.scores[name] = 0;
-  document.getElementById('lobbyCount').textContent = ` ${GAME.players.length}/${_maxPlayers}`;
-  renderLobbySlots();
-  updateLobbyStart();
-  toast(`👋 ${name} ${lang==='ru'?'присоединился':'joined'}!`);
-}
+
 
 function renderLobbySlots() {
   const wrap = document.getElementById('lobbySlots');
@@ -3281,8 +3271,8 @@ function closeWinner() {
    QUICK DEMO
 ============================================ */
 function quickDemo() {
-  const demoNames = lang === 'ru' ? ['Алекс', 'Маша', 'Дима'] : ['Alex', 'Mary', 'Dan'];
-  GAME.players = demoNames.map((name, i) => ({ name, avatar: AVATARS[i], score: 0 }));
+  const demoNames = lang === 'ru' ? ['Я', 'Друг 1', 'Друг 2'] : ['Me', 'Friend 1', 'Friend 2'];
+  GAME.players = demoNames.map((name, i) => ({ name, avatar: AVATARS[i], score: 0, id: name }));
   GAME.categories = ['friends', 'family'];
   GAME.scores = {};
   GAME.players.forEach(p => { GAME.scores[p.name] = 0; });
