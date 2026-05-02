@@ -4630,9 +4630,10 @@ function getPenaltyBanner() {
 function hostStartGame() {
   if (GAME.players.length < 2) { toast(t('toast-need-2')); return; }
   _playerTruthStreak = new Array(GAME.players.length).fill(0);
+  if (!_isDemoMode) { _isDemoMode = false; } // ensure clean state
 
-  if (WS_URL) {
-    // Real server — host sends start_game
+  // Use server only if we have an actual room code (not demo)
+  if (WS_URL && state.roomCode && _ws?.readyState === WebSocket.OPEN) {
     wsSend({
       type:      'start_game',
       gameMode:  _gameMode,
@@ -4642,7 +4643,7 @@ function hostStartGame() {
   } else {
     // Local demo mode
     GAME.round = 1; GAME.turn = 1; GAME.currentIdx = 0; GAME.usedCards = {};
-        GAME.players.forEach(p => { p.score = 0; GAME.scores[p.name] = 0; });
+    GAME.players.forEach(p => { p.score = 0; GAME.scores[p.name] = 0; });
     initGameScreen();
   }
 }
@@ -4889,6 +4890,14 @@ function showCardScreen(p, type, cardText) {
 }
 
 function drawCard(type, cats) {
+  // Demo mode: fixed cards in rotation, no randomness
+  if (_isDemoMode) {
+    const demoPool = DEMO_CARDS[type]?.[lang] || DEMO_CARDS[type]?.ru || [];
+    const idx = _demoCardIdx[type] % demoPool.length;
+    _demoCardIdx[type] = (idx + 1) % demoPool.length;
+    return demoPool[idx];
+  }
+
   const pool = [];
   cats.forEach(cat => {
     const bucket = CARDS[type]?.[cat]?.[lang];
@@ -5070,10 +5079,63 @@ function advanceTurn() {
   if (GAME.turn > GAME.players.length) { GAME.turn = 1; GAME.round++; }
   GAME.currentIdx = (GAME.currentIdx + 1) % GAME.players.length;
 
+  // Demo mode: show upgrade prompt after limit
+  if (_isDemoMode) {
+    _demoTurnCount++;
+    if (_demoTurnCount >= DEMO_MAX_TURNS) {
+      showDemoEndScreen();
+      return;
+    }
+  }
+
   // Show ad between turns for free users
   showAdIfNeeded(() => {
     initGameScreen();
   });
+}
+
+function showDemoEndScreen() {
+  let el = document.getElementById('demoEndModal');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'demoEndModal';
+    el.className = 'modal-bg';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `
+    <div class="modal-sheet" onclick="event.stopPropagation()">
+      <div class="modal-handle"></div>
+      <div style="text-align:center;padding:12px 0 20px">
+        <div style="font-size:52px;margin-bottom:12px">🎮</div>
+        <div style="font-family:var(--font-display);font-size:20px;font-weight:900;margin-bottom:8px">
+          ${lang==='ru' ? 'Демо закончилось!' : 'Demo is over!'}
+        </div>
+        <div style="font-size:14px;color:var(--text2);margin-bottom:20px;line-height:1.6">
+          ${lang==='ru'
+            ? 'В демо доступно только 5 фиксированных карточек.<br>Создай настоящую комнату или разблокируй Premium<br>для 2400+ карточек и 6 категорий!'
+            : 'Demo has only 5 fixed cards.<br>Create a real room or unlock Premium<br>for 2400+ cards and 6 categories!'}
+        </div>
+        <div style="background:linear-gradient(135deg,rgba(245,183,49,0.15),rgba(79,142,247,0.1));border-radius:14px;padding:14px;margin-bottom:20px;font-size:13px;color:var(--text2)">
+          ✅ ${lang==='ru' ? '2400+ уникальных карточек' : '2400+ unique cards'}<br>
+          ✅ ${lang==='ru' ? '6 категорий включая Горячее' : '6 categories including Hot'}<br>
+          ✅ ${lang==='ru' ? 'До 10 игроков в комнате' : 'Up to 10 players'}<br>
+          ✅ ${lang==='ru' ? 'Без рекламы' : 'No ads'}
+        </div>
+      </div>
+      <div class="btn-stack">
+        <button class="btn btn-gold" onclick="document.getElementById('demoEndModal').classList.remove('open'); _isDemoMode=false; openPremium();">
+          ⭐ ${lang==='ru' ? 'Разблокировать Premium' : 'Unlock Premium'}
+        </button>
+        <button class="btn btn-primary" onclick="document.getElementById('demoEndModal').classList.remove('open'); _isDemoMode=false; go('s-create');">
+          🎮 ${lang==='ru' ? 'Создать настоящую комнату' : 'Create real room'}
+        </button>
+        <button class="btn btn-outline" onclick="document.getElementById('demoEndModal').classList.remove('open'); _isDemoMode=false; go('s-home');">
+          ${lang==='ru' ? 'На главную' : 'Home'}
+        </button>
+      </div>
+    </div>
+  `;
+  el.classList.add('open');
 }
 
 /* ============================================
@@ -5236,6 +5298,46 @@ function closeWinner() {
 /* ============================================
    QUICK DEMO
 ============================================ */
+let _isDemoMode = false;
+let _demoCardIdx = { truth: 0, dare: 0 };
+let _demoTurnCount = 0;
+const DEMO_MAX_TURNS = 6; // после 6 ходов предлагаем Premium
+
+const DEMO_CARDS = {
+  truth: {
+    ru: [
+      "Какой твой самый большой страх?",
+      "Что ты делаешь когда думаешь что никто не смотрит?",
+      "Какой подарок ты тайно ненавидишь?",
+      "Кого из присутствующих ты бы взял на необитаемый остров?",
+      "Какое твоё самое постыдное хобби?",
+    ],
+    en: [
+      "What is your biggest fear?",
+      "What do you do when you think no one is watching?",
+      "What gift do you secretly hate?",
+      "Who here would you take to a deserted island?",
+      "What's your most embarrassing hobby?",
+    ],
+  },
+  dare: {
+    ru: [
+      "Сделай 10 отжиманий прямо сейчас",
+      "Изобрази кого-нибудь здесь — пусть угадают",
+      "Говори только шёпотом следующие два хода",
+      "Скажи комплимент каждому игроку за 30 секунд",
+      "Расскажи стендап-шутку собственного сочинения",
+    ],
+    en: [
+      "Do 10 push-ups right now",
+      "Impersonate someone here — let them guess",
+      "Speak only in whispers for the next two turns",
+      "Give every player a compliment in 30 seconds",
+      "Tell an original stand-up joke",
+    ],
+  },
+};
+
 function quickDemo() {
   const demoNames = lang === 'ru' ? ['Я', 'Друг 1', 'Друг 2'] : ['Me', 'Friend 1', 'Friend 2'];
   GAME.players = demoNames.map((name, i) => ({ name, avatar: AVATARS[i], score: 0, id: name }));
@@ -5244,9 +5346,15 @@ function quickDemo() {
   GAME.players.forEach(p => { GAME.scores[p.name] = 0; });
   GAME.round = 1; GAME.turn = 1; GAME.currentIdx = 0; GAME.usedCards = {};
   state.myName = demoNames[0]; state.isHost = true;
+  state.roomCode = ''; // clear so hostStartGame uses local mode
+  state.hostIsPremium = state.isPremium;
+  _isDemoMode = true;
+  _demoCardIdx = { truth: 0, dare: 0 };
+  _demoTurnCount = 0;
   _penalty = null; _noPenalty = false; _gameMode = 'turns';
-    renderPenaltyScreen();
-  go('s-penalty');
+  _playerTruthStreak = new Array(GAME.players.length).fill(0);
+  // Demo: skip penalty/gamemode screens, go straight to game
+  hostStartGame();
 }
 
 /* ============================================
