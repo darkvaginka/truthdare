@@ -3987,12 +3987,12 @@ const CARDS = {
 let state = {
   lang: 'ru',
   isPremium: false,
+  hostIsPremium: false, // true if room host has premium
   myName: '',
   myAvatar: '',
   isHost: false,
   roomCode: '',
   maxPlayers: 5,
-  // "room" simulation — in production this is WebSocket state
   room: null,
 };
 
@@ -4316,7 +4316,7 @@ function handleServerMsg(msg) {
 function applyServerState(serverState) {
   if (!serverState) return;
   GAME.players    = serverState.players.map(p => ({
-    ...p, ws: null, // ws is server-side only
+    ...p, ws: null,
   }));
   GAME.categories  = serverState.categories || GAME.categories;
   GAME.round       = serverState.round       ?? 1;
@@ -4324,6 +4324,10 @@ function applyServerState(serverState) {
   GAME.currentIdx  = serverState.currentIdx  ?? 0;
   _gameMode        = serverState.gameMode    || _gameMode;
   _penalty         = serverState.penalty     ?? _penalty;
+  // If host is premium — no ads for anyone in the room
+  if (serverState.hostIsPremium !== undefined) {
+    state.hostIsPremium = serverState.hostIsPremium;
+  }
   GAME.scores      = {};
   GAME.players.forEach(p => { GAME.scores[p.name] = p.score; });
 }
@@ -4343,13 +4347,14 @@ function createRoom() {
     // Real server mode
     wsConnect(() => {
       wsSend({
-        type:       'create_room',
+        type:          'create_room',
         name,
-        avatar:     state.myAvatar,
-        categories: roomCats,
-        maxPlayers: _maxPlayers,
-        gameMode:   _gameMode,
-        penalty:    _penalty,
+        avatar:        state.myAvatar,
+        categories:    roomCats,
+        maxPlayers:    _maxPlayers,
+        gameMode:      _gameMode,
+        penalty:       _penalty,
+        hostIsPremium: state.isPremium, // pass premium status to server
       });
     });
   } else {
@@ -4624,6 +4629,7 @@ function getPenaltyBanner() {
 
 function hostStartGame() {
   if (GAME.players.length < 2) { toast(t('toast-need-2')); return; }
+  _playerTruthStreak = new Array(GAME.players.length).fill(0);
 
   if (WS_URL) {
     // Real server — host sends start_game
@@ -4636,8 +4642,7 @@ function hostStartGame() {
   } else {
     // Local demo mode
     GAME.round = 1; GAME.turn = 1; GAME.currentIdx = 0; GAME.usedCards = {};
-    _turnTruthUsed = 0; _turnDareUsed = 0;
-    GAME.players.forEach(p => { p.score = 0; GAME.scores[p.name] = 0; });
+        GAME.players.forEach(p => { p.score = 0; GAME.scores[p.name] = 0; });
     initGameScreen();
   }
 }
@@ -4652,8 +4657,9 @@ const GAME_MODES = [
 ];
 
 let _gameMode = 'turns';
-let _turnTruthUsed = 0;
-let _turnDareUsed  = 0;
+// Per-player consecutive truth counter for '2t1d' mode
+// _playerTruthStreak[idx] = how many truths in a row this player has taken
+let _playerTruthStreak = [];
 
 function goToGameMode() {
   renderGameModeScreen();
@@ -4694,6 +4700,10 @@ function renderGameModeScreen() {
 ============================================ */
 function initGameScreen() {
   GAME.currentIdx = GAME.currentIdx % GAME.players.length;
+  // Init streak array if needed
+  if (_playerTruthStreak.length !== GAME.players.length) {
+    _playerTruthStreak = new Array(GAME.players.length).fill(0);
+  }
   const p = GAME.players[GAME.currentIdx];
 
   // Determine if it's my turn
@@ -4761,51 +4771,36 @@ function renderTurnScreen() {
         ⏭ ${t('skip-turn')}
       </button>`;
   } else if (_gameMode === '2t1d') {
-    // Truth is blocked if player took 2+ truths with zero dares this turn
-    const truthBlocked = _turnTruthUsed >= 2 && _turnDareUsed === 0;
+    // Truth blocked if this player took 2 truths in a row (streak)
+    const streak = _playerTruthStreak[GAME.currentIdx] || 0;
+    const truthBlocked = streak >= 2;
     const warningMsg = truthBlocked
-      ? (lang==='ru' ? '🔒 Правда заблокирована — сначала сделай Действие!' : '🔒 Truth locked — do a Dare first!')
-      : (_turnTruthUsed >= 2
-          ? (lang==='ru' ? '✅ Можешь взять ещё правду или завершить ход' : '✅ You can take more truths or end turn')
+      ? (lang==='ru' ? '🔒 Ты взял правду 2 раза подряд — теперь только Действие!' : '🔒 Two truths in a row — you must take a Dare!')
+      : (streak === 1
+          ? (lang==='ru' ? '⚠️ Ещё одна правда — и следующий ход придётся взять Действие' : '⚠️ One more truth and next turn you must take a Dare')
           : '');
-    const statusMsg = _turnTruthUsed === 0 && _turnDareUsed === 0
-      ? (lang==='ru' ? 'Выбирай свободно — или правда, или действие' : 'Choose freely — truth or dare')
-      : (lang==='ru'
-          ? `Правд: ${_turnTruthUsed} · Действий: ${_turnDareUsed}`
-          : `Truths: ${_turnTruthUsed} · Dares: ${_turnDareUsed}`);
     area.innerHTML = `
-      <div style="display:flex;gap:8px;margin-bottom:12px">
-        <div style="flex:1;text-align:center;padding:10px 8px;
-          background:${truthBlocked?'rgba(247,79,107,0.08)':'rgba(79,142,247,0.1)'};
-          border-radius:12px;border:1.5px solid ${truthBlocked?'rgba(247,79,107,0.3)':'rgba(79,142,247,0.25)'}">
-          <div style="font-size:18px;margin-bottom:2px">🧠</div>
-          <div style="font-family:var(--font-display);font-size:20px;font-weight:800;
-            color:${truthBlocked?'var(--dare)':'var(--truth)'}">${_turnTruthUsed}</div>
-          <div style="font-size:10px;color:var(--text2)">${lang==='ru'?'правд взято':'truths taken'}</div>
-        </div>
-        <div style="flex:1;text-align:center;padding:10px 8px;
-          background:rgba(247,79,107,0.1);
-          border-radius:12px;border:1.5px solid rgba(247,79,107,0.25)">
-          <div style="font-size:18px;margin-bottom:2px">🎯</div>
-          <div style="font-family:var(--font-display);font-size:20px;font-weight:800;color:var(--dare)">${_turnDareUsed}</div>
-          <div style="font-size:10px;color:var(--text2)">${lang==='ru'?'действий взято':'dares taken'}</div>
-        </div>
-      </div>
-      ${warningMsg ? `<div style="text-align:center;font-size:13px;font-weight:700;color:${truthBlocked?'var(--dare)':'var(--green)'};margin-bottom:10px;padding:8px;background:${truthBlocked?'rgba(247,79,107,0.08)':'rgba(34,197,94,0.08)'};border-radius:10px">${warningMsg}</div>` : ''}
-      <div class="btn-row" style="margin-bottom:10px">
-        <button class="btn btn-truth-big" onclick="pickType('truth')" ${truthBlocked ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''}>
-          🧠 ${t('truth')}
+      ${streak > 0 ? `<div style="text-align:center;font-size:13px;font-weight:700;
+        color:${truthBlocked?'var(--dare)':'var(--gold)'};
+        margin-bottom:12px;padding:10px;
+        background:${truthBlocked?'rgba(247,79,107,0.08)':'rgba(245,183,49,0.08)'};
+        border-radius:12px;border:1px solid ${truthBlocked?'rgba(247,79,107,0.2)':'rgba(245,183,49,0.2)'}">
+        ${warningMsg}
+      </div>` : ''}
+      <div class="choice-grid" style="margin-bottom:10px">
+        <button class="choice-btn truth" onclick="pickType('truth')"
+          ${truthBlocked ? 'disabled style="opacity:0.3;cursor:not-allowed;filter:grayscale(1)"' : ''}>
+          <span class="choice-emoji">🧠</span>
+          <span>${t('truth')}</span>
         </button>
-        <button class="btn btn-dare-big" onclick="pickType('dare')">
-          🎯 ${t('dare')}
+        <button class="choice-btn dare" onclick="pickType('dare')">
+          <span class="choice-emoji">🎯</span>
+          <span>${t('dare')}</span>
         </button>
       </div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-outline" style="font-size:12px;flex:1" onclick="skipTurn()">⏭ ${t('skip-turn')}</button>
-        <button class="btn btn-ghost" style="font-size:12px;flex:1" onclick="endMyTurn()">
-          ➡️ ${lang==='ru'?'Передать ход':'End my turn'}
-        </button>
-      </div>`;
+      <button class="btn btn-outline" style="font-size:13px" onclick="skipTurn()">
+        ⏭ ${t('skip-turn')}
+      </button>`;
   } else if (_gameMode === 'auto') {
     area.innerHTML = `
       <button class="btn btn-primary" style="padding:22px;font-size:18px;border-radius:var(--radius-lg)" onclick="autoPickCard()">
@@ -4848,9 +4843,8 @@ function autoPickCard() {
 
 function pickType(type) {
   if (_gameMode === '2t1d') {
-    if (type === 'truth' && _turnTruthUsed >= 2 && _turnDareUsed === 0) return;
-    if (type === 'truth') _turnTruthUsed++;
-    else _turnDareUsed++;
+    const streak = _playerTruthStreak[GAME.currentIdx] || 0;
+    if (type === 'truth' && streak >= 2) return; // blocked
   }
   GAME.currentType = type;
   const cardText = drawCard(type, GAME.categories);
@@ -4929,20 +4923,20 @@ function rerollCard() {
 function completeTask() {
   haptic('success');
   toast(t('toast-complete'));
-  if (WS_URL) {
-    if (_gameMode === '2t1d') {
-      // In 2t1d: update local counter and go back to turn screen
-      // Only advance when player clicks "End turn"
-      const p = GAME.players[GAME.currentIdx];
-      p.score += 2; GAME.scores[p.name] = p.score;
-      renderTurnScreen(); go('s-wheel');
+  // Update streak for 2t1d
+  if (_gameMode === '2t1d') {
+    if (GAME.currentType === 'truth') {
+      _playerTruthStreak[GAME.currentIdx] = (_playerTruthStreak[GAME.currentIdx] || 0) + 1;
     } else {
-      wsSend({ type: 'task_result', result: 'complete' });
+      _playerTruthStreak[GAME.currentIdx] = 0; // dare resets streak
     }
+  }
+  if (WS_URL) {
+    wsSend({ type: 'task_result', result: 'complete' });
   } else {
     const p = GAME.players[GAME.currentIdx];
     p.score += 2; GAME.scores[p.name] = p.score;
-    _afterAction();
+    advanceTurn();
   }
 }
 
@@ -4952,29 +4946,19 @@ function refuseTask() {
     showPenaltyModal(GAME.players[GAME.currentIdx]);
   } else {
     toast(t('toast-refuse'));
+    // Refusing doesn't change the streak — player didn't complete anything
     if (WS_URL) {
-      if (_gameMode === '2t1d') {
-        const p = GAME.players[GAME.currentIdx];
-        p.score -= 1; GAME.scores[p.name] = p.score;
-        renderTurnScreen(); go('s-wheel');
-      } else {
-        wsSend({ type: 'task_result', result: 'refuse' });
-      }
+      wsSend({ type: 'task_result', result: 'refuse' });
     } else {
       const p = GAME.players[GAME.currentIdx];
       p.score -= 1; GAME.scores[p.name] = p.score;
-      _afterAction();
+      advanceTurn();
     }
   }
 }
 
 function _afterAction() {
-  if (_gameMode === '2t1d') {
-    // Always return to turn screen so player can take more cards or pass
-    renderTurnScreen(); go('s-wheel');
-  } else {
-    advanceTurn();
-  }
+  advanceTurn();
 }
 
 function showPenaltyModal(player) {
@@ -5035,17 +5019,26 @@ let _adTurnCounter = 0; // show ad every N turns
 const AD_EVERY_TURNS = 3; // show ad every 3 turns for free users
 
 function initAdsgram() {
-  if (state.isPremium) return; // no ads for premium
+  // Always init controller — shouldShowAds() decides whether to show
   try {
     _adController = window.Adsgram?.init({ blockId: ADSGRAM_BLOCK_ID });
+    console.log('[Adsgram] Controller initialized');
   } catch(e) {
     console.log('[Adsgram] Init failed:', e.message);
+    _adController = null;
   }
 }
 
+function shouldShowAds() {
+  // No ads if: this player is premium OR host is premium
+  if (state.isPremium) return false;
+  if (state.hostIsPremium) return false;
+  if (!_adController) return false;
+  return true;
+}
+
 function showAdIfNeeded(onDone) {
-  // Only show ads to free users
-  if (state.isPremium || !_adController) {
+  if (!shouldShowAds()) {
     onDone();
     return;
   }
@@ -5073,8 +5066,6 @@ function showAdIfNeeded(onDone) {
 
 function advanceTurn() {
   haptic('light');
-  _turnTruthUsed = 0;
-  _turnDareUsed  = 0;
   GAME.turn++;
   if (GAME.turn > GAME.players.length) { GAME.turn = 1; GAME.round++; }
   GAME.currentIdx = (GAME.currentIdx + 1) % GAME.players.length;
@@ -5228,8 +5219,7 @@ function playAgain() {
   document.getElementById('winnerModal')?.classList.remove('open');
   GAME.players.forEach(p => { p.score = 0; GAME.scores[p.name] = 0; });
   GAME.round = 1; GAME.turn = 1; GAME.currentIdx = 0; GAME.usedCards = {};
-  _turnTruthUsed = 0; _turnDareUsed = 0;
-  if (WS_URL && state.isHost) {
+    if (WS_URL && state.isHost) {
     // Host restarts via server
     wsSend({ type: 'start_game', gameMode: _gameMode, penalty: _penalty, categories: GAME.categories });
   } else {
@@ -5255,8 +5245,7 @@ function quickDemo() {
   GAME.round = 1; GAME.turn = 1; GAME.currentIdx = 0; GAME.usedCards = {};
   state.myName = demoNames[0]; state.isHost = true;
   _penalty = null; _noPenalty = false; _gameMode = 'turns';
-  _turnTruthUsed = 0; _turnDareUsed = 0;
-  renderPenaltyScreen();
+    renderPenaltyScreen();
   go('s-penalty');
 }
 
@@ -5292,8 +5281,7 @@ function doExit() {
   _myId = null;
   GAME.players = []; GAME.round = 1; GAME.turn = 1;
   GAME.currentIdx = 0; GAME.usedCards = {};
-  _turnTruthUsed = 0; _turnDareUsed = 0;
-  go('s-home');
+    go('s-home');
 }
 
 /* ============================================
