@@ -991,21 +991,24 @@ body::before {
   <div class="hdr">
     <div style="width:40px"></div>
     <div class="hdr-logo" data-i="their-turn">Чужой ход</div>
-    <div style="width:40px"></div>
+    <div class="icon-btn" onclick="showScores()">🏆</div>
   </div>
   <div class="cp-badge">
     <div class="cp-av" id="watchAv">😀</div>
     <div>
-      <div class="cp-label" data-i="now-choosing">Сейчас выбирает</div>
+      <div class="cp-label" data-i="now-choosing">Выполняет</div>
       <div class="cp-name" id="watchName">—</div>
     </div>
   </div>
-  <div class="card" style="text-align:center;padding:32px">
-    <div style="font-size:48px;margin-bottom:16px;animation:pulse 1.5s infinite">👀</div>
-    <div style="font-weight:700;font-size:16px" data-i="watching-msg">Следи за игрой!</div>
-    <div style="font-size:13px;color:var(--text2);margin-top:8px" data-i="watching-sub">Скоро твоя очередь...</div>
+
+  <!-- Before card is picked: waiting state -->
+  <div id="watchWaiting" class="card" style="text-align:center;padding:32px">
+    <div style="font-size:48px;margin-bottom:16px;animation:pulse 1.5s infinite">⏳</div>
+    <div style="font-weight:700;font-size:16px" data-i="watching-msg">Выбирает карточку...</div>
+    <div style="font-size:13px;color:var(--text2);margin-top:8px" data-i="watching-sub">Скоро твоя очередь!</div>
   </div>
-  <div class="spacer-16"></div>
+
+  <!-- After card is picked: show the card -->
   <div id="watchCardArea" style="display:none">
     <div class="game-card-stage">
       <div class="game-card" id="watchCard">
@@ -1015,7 +1018,15 @@ body::before {
         <div class="gc-text" id="watchCardText">...</div>
       </div>
     </div>
+    <div class="spacer-12"></div>
+    <!-- Observers can mark result too (social pressure 😄) -->
+    <div style="text-align:center;font-size:13px;color:var(--text2);margin-bottom:10px" data-i="watch-judge">Выполнил?</div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" style="font-size:13px" onclick="observerVote('yes')">👍 <span data-i="watch-yes">Да!</span></button>
+      <button class="btn btn-ghost" style="font-size:13px" onclick="observerVote('no')">👎 <span data-i="watch-no">Нет!</span></button>
+    </div>
   </div>
+  <div class="spacer-16"></div>
 </div>
 
 <!-- =============================
@@ -1247,8 +1258,11 @@ const T = {
     'skip-turn':     'Пропустить (−1 очко)',
     'their-turn':    'Чужой ход',
     'now-choosing':  'Сейчас выбирает',
-    'watching-msg':  'Следи за игрой!',
-    'watching-sub':  'Скоро твоя очередь...',
+    'watching-msg':  'Выбирает карточку...',
+    'watching-sub':  'Скоро твоя очередь!',
+    'watch-judge':   'Выполнил?',
+    'watch-yes':     'Да!',
+    'watch-no':      'Нет!',
     'answering':     'Отвечает',
     'tap-reroll':    'Нажми чтобы заменить',
     'other-card':    'Другая',
@@ -1361,8 +1375,11 @@ const T = {
     'skip-turn':     'Skip (−1 point)',
     'their-turn':    "Someone's Turn",
     'now-choosing':  'Now choosing',
-    'watching-msg':  'Watch the game!',
-    'watching-sub':  "Your turn is coming...",
+    'watching-msg':  'Picking a card...',
+    'watching-sub':  "Your turn is coming!",
+    'watch-judge':   'Did they do it?',
+    'watch-yes':     'Yes!',
+    'watch-no':      'No!',
     'answering':     'Answering',
     'tap-reroll':    'Tap to get another',
     'other-card':    'Another',
@@ -2216,8 +2233,6 @@ function setMax(n) {
 // In production set this to your deployed server URL
 // e.g. 'wss://tod-server.railway.app'
 // In demo mode (no server) we use local simulation
-const BACKEND_URL = 'https://truthdare-production.up.railway.app';
-const WEBAPP_URL  = 'https://truthdare-dusky.vercel.app';
 const WS_URL = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL)
   ? BACKEND_URL.replace(/^http/, 'ws')
   : null;
@@ -2331,17 +2346,24 @@ function handleServerMsg(msg) {
       initGameScreen();
       break;
 
-    case 'type_picked':
-      // Guest sees the card type picked by current player
+    case 'type_picked': {
       if (msg.playerId !== _myId) {
         const p = GAME.players[GAME.currentIdx];
-        // show watch screen with card type
         document.getElementById('watchAv').textContent   = p?.avatar || '😀';
         document.getElementById('watchName').textContent = p?.name   || '?';
-        document.getElementById('watchCardArea').style.display = 'none';
+        // Hide waiting, show card
+        document.getElementById('watchWaiting').style.display  = 'none';
+        const area = document.getElementById('watchCardArea');
+        const wc   = document.getElementById('watchCard');
+        wc.className = `game-card ${msg.cardType}-card`;
+        document.getElementById('watchCardType').textContent =
+          msg.cardType === 'truth' ? t('truth').toUpperCase() : t('dare').toUpperCase();
+        document.getElementById('watchCardText').textContent = msg.cardText || '...';
+        area.style.display = 'block';
         go('s-watch');
       }
       break;
+    }
 
     case 'reaction': {
       const el = document.createElement('div');
@@ -2762,8 +2784,37 @@ function renderGameModeScreen() {
 ============================================ */
 function initGameScreen() {
   GAME.currentIdx = GAME.currentIdx % GAME.players.length;
-  renderTurnScreen();
-  go('s-wheel');
+  const p = GAME.players[GAME.currentIdx];
+
+  // Determine if it's my turn
+  // In WS mode: compare by id. In demo mode: first player is always "me"
+  const isMyTurn = WS_URL
+    ? (p.id === _myId)
+    : (GAME.currentIdx === 0); // demo: player 1 is always me
+
+  if (isMyTurn) {
+    renderTurnScreen();
+    go('s-wheel');
+  } else {
+    renderWatchScreen(p);
+  }
+}
+
+function renderWatchScreen(p) {
+  document.getElementById('watchAv').textContent   = p.avatar;
+  document.getElementById('watchName').textContent = p.name;
+  // Reset to waiting state
+  document.getElementById('watchWaiting').style.display  = 'block';
+  document.getElementById('watchCardArea').style.display = 'none';
+  go('s-watch');
+}
+
+function observerVote(vote) {
+  const emoji = vote === 'yes' ? '👍' : '👎';
+  wsSend({ type: 'reaction', emoji });
+  toast(vote === 'yes'
+    ? (lang==='ru'?'👍 Засчитано!':'👍 Approved!')
+    : (lang==='ru'?'👎 Не считается!':'👎 Denied!'));
 }
 
 function renderTurnScreen() {
@@ -2878,13 +2929,14 @@ function autoPickCard() {
 
 function pickType(type) {
   if (_gameMode === '2t1d') {
-    // Block truth if taken 2+ times with no dare yet
     if (type === 'truth' && _turnTruthUsed >= 2 && _turnDareUsed === 0) return;
     if (type === 'truth') _turnTruthUsed++;
     else _turnDareUsed++;
   }
   GAME.currentType = type;
-  showCardScreen(GAME.players[GAME.currentIdx], type);
+  const cardText = drawCard(type, GAME.categories);
+  if (WS_URL) { wsSend({ type: 'pick_type', cardType: type, cardText }); }
+  showCardScreen(GAME.players[GAME.currentIdx], type, cardText);
 }
 
 function skipTurn() {
@@ -2902,9 +2954,9 @@ function penaltyDone() {
   else { _afterAction(); }
 }
 
-function showCardScreen(p, type) {
+function showCardScreen(p, type, cardText) {
   GAME.currentType = type;
-  const card = drawCard(type, GAME.categories);
+  const card = cardText || drawCard(type, GAME.categories);
   document.getElementById('cardHdrTitle').textContent   = type === 'truth' ? '🧠 ' + t('truth') : '🎯 ' + t('dare');
   document.getElementById('cardAv').textContent         = p.avatar;
   document.getElementById('cardPlayerName').textContent = p.name;
