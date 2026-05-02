@@ -19,10 +19,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const app    = express();
 const server = http.createServer(app);
 
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-}));
+app.use(cors());
 app.use(express.json());
 
 // Health check
@@ -30,6 +27,58 @@ app.get('/', (_, res) => res.json({ ok: true, service: 'ToD Server', rooms: room
 
 // Webhook for Telegram Bot
 app.post('/webhook', handleBotWebhook);
+
+/* ============================================
+   STARS PAYMENTS
+============================================ */
+const PREMIUM_PLANS = {
+  forever: { stars: 299, label: 'Premium навсегда', labelEn: 'Premium Forever' },
+  month:   { stars: 49,  label: 'Premium на месяц', labelEn: 'Premium Monthly' },
+};
+
+// Create invoice link
+app.post('/create-invoice', async (req, res) => {
+  const { plan, lang } = req.body;
+  const p = PREMIUM_PLANS[plan];
+  if (!p) return res.status(400).json({ error: 'Invalid plan' });
+
+  const isRu = lang === 'ru';
+  try {
+    const resp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/createInvoiceLink`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title:          isRu ? '⭐ Правда или Действие Premium' : '⭐ Truth or Dare Premium',
+        description:    isRu
+          ? 'Все категории, до 10 игроков, без ограничений'
+          : 'All categories, up to 10 players, no limits',
+        payload:        `premium_${plan}_${Date.now()}`,
+        currency:       'XTR',
+        prices:         [{ label: isRu ? p.label : p.labelEn, amount: p.stars }],
+      }),
+    });
+    const data = await resp.json();
+    if (!data.ok) {
+      console.error('[Stars] createInvoiceLink error:', data);
+      return res.status(500).json({ error: data.description });
+    }
+    res.json({ invoiceLink: data.result });
+  } catch (e) {
+    console.error('[Stars] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Verify premium status
+app.get('/premium-status', async (req, res) => {
+  const { userId } = req.query;
+  if (!userId) return res.status(400).json({ error: 'No userId' });
+  const isPremium = premiumUsers.has(String(userId));
+  res.json({ isPremium });
+});
+
+// In-memory premium store (replace with DB in production)
+const premiumUsers = new Set();
 
 /* ============================================
    ROOM STATE
@@ -122,13 +171,7 @@ function roomPublicState(room) {
 /* ============================================
    WEBSOCKET SERVER
 ============================================ */
-const wss = new WebSocketServer({ 
-  server,
-  verifyClient: (info) => {
-    // Allow all origins
-    return true;
-  }
-});
+const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) => {
   ws.clientId = crypto.randomUUID();
@@ -379,13 +422,43 @@ async function handleBotWebhook(req, res) {
   res.json({ ok: true }); // respond fast
 
   const update = req.body;
+
+  // ── Pre-checkout: must answer within 10 seconds ──
+  if (update.pre_checkout_query) {
+    const pcq = update.pre_checkout_query;
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerPreCheckoutQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pre_checkout_query_id: pcq.id, ok: true }),
+    });
+    return;
+  }
+
+  // ── Successful payment ──
+  if (update.message?.successful_payment) {
+    const userId  = String(update.message.from.id);
+    const payload = update.message.successful_payment.invoice_payload;
+    const stars   = update.message.successful_payment.total_amount;
+
+    premiumUsers.add(userId);
+    console.log(`[Stars] Payment received: userId=${userId}, payload=${payload}, stars=${stars}`);
+
+    // Notify user
+    const isForever = payload.includes('forever');
+    await botSend(update.message.chat.id, {
+      text: isForever
+        ? '🎉 Premium активирован навсегда! Наслаждайся игрой без ограничений ⭐'
+        : '🎉 Premium активирован на месяц! Приятной игры ⭐',
+    });
+    return;
+  }
+
   if (!update?.message) return;
 
   const msg  = update.message;
   const chat = msg.chat.id;
   const text = msg.text || '';
 
-  // Commands
   if (text === '/start') {
     await botSend(chat, botStartMessage());
   } else if (text === '/help') {
