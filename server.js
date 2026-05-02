@@ -1,6 +1,6 @@
 /**
  * Truth or Dare — Backend Server
- * WebSocket rooms + Stars payments + Persistent premium
+ * WebSocket rooms + Stars payments + PostgreSQL premium storage
  */
 
 const express  = require('express');
@@ -8,52 +8,72 @@ const { WebSocketServer, WebSocket } = require('ws');
 const cors     = require('cors');
 const http     = require('http');
 const crypto   = require('crypto');
-const fs       = require('fs');
-const path     = require('path');
+const { Pool } = require('pg');
 
 const PORT      = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 
 /* ============================================
-   PERSISTENT PREMIUM STORAGE
+   POSTGRESQL
 ============================================ */
-const DB_PATH = path.join('/tmp', 'premium.json');
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
-function loadDB() {
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS premium_users (
+      user_id     TEXT PRIMARY KEY,
+      plan        TEXT NOT NULL,
+      purchased_at BIGINT NOT NULL,
+      expires_at  BIGINT
+    )
+  `);
+  console.log('[DB] PostgreSQL ready');
+}
+
+async function getPremiumStatus(userId) {
   try {
-    if (fs.existsSync(DB_PATH)) return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-  } catch(e) { console.error('[DB] Load error:', e.message); }
-  return {};
-}
-
-function saveDB(db) {
-  try { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); }
-  catch(e) { console.error('[DB] Save error:', e.message); }
-}
-
-let premiumDB = loadDB();
-
-function getPremiumStatus(userId) {
-  const record = premiumDB[String(userId)];
-  if (!record) return { isPremium: false };
-  if (record.plan === 'forever') return { isPremium: true, plan: 'forever', expiresAt: null };
-  if (record.expiresAt && Date.now() < record.expiresAt)
-    return { isPremium: true, plan: 'month', expiresAt: record.expiresAt };
-  return { isPremium: false, plan: 'expired', expiresAt: record.expiresAt };
-}
-
-function activatePremium(userId, plan) {
-  const uid = String(userId);
-  const existing = premiumDB[uid];
-  const now = Date.now();
-  if (plan === 'forever') {
-    premiumDB[uid] = { plan: 'forever', purchasedAt: now, expiresAt: null };
-  } else {
-    const base = (existing?.plan === 'month' && existing.expiresAt > now)
-      ? existing.expiresAt : now;
-    premiumDB[uid] = { plan: 'month', purchasedAt: now, expiresAt: base + 30*24*60*60*1000 };
+    const res = await pool.query('SELECT * FROM premium_users WHERE user_id = $1', [String(userId)]);
+    if (!res.rows.length) return { isPremium: false };
+    const r = res.rows[0];
+    if (r.plan === 'forever') return { isPremium: true, plan: 'forever', expiresAt: null };
+    const expiresAt = Number(r.expires_at);
+    if (expiresAt && Date.now() < expiresAt) return { isPremium: true, plan: 'month', expiresAt };
+    return { isPremium: false, plan: 'expired', expiresAt };
+  } catch(e) {
+    console.error('[DB] getPremiumStatus error:', e.message);
+    return { isPremium: false };
   }
-  saveDB(premiumDB);
+}
+
+async function activatePremium(userId, plan) {
+  const uid = String(userId);
+  const now = Date.now();
+  let expiresAt = null;
+
+  if (plan === 'month') {
+    // Extend from existing expiry if still active
+    const existing = await getPremiumStatus(uid);
+    const base = (existing.isPremium && existing.plan === 'month' && existing.expiresAt > now)
+      ? existing.expiresAt : now;
+    expiresAt = base + 30 * 24 * 60 * 60 * 1000;
+  }
+
+  await pool.query(`
+    INSERT INTO premium_users (user_id, plan, purchased_at, expires_at)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (user_id) DO UPDATE
+      SET plan = EXCLUDED.plan,
+          purchased_at = EXCLUDED.purchased_at,
+          expires_at = CASE
+            WHEN premium_users.plan = 'forever' THEN NULL
+            ELSE EXCLUDED.expires_at
+          END
+  `, [uid, plan, now, expiresAt]);
+
+  console.log(`[Premium] Activated uid=${uid} plan=${plan} expires=${expiresAt}`);
   return getPremiumStatus(uid);
 }
 
@@ -82,14 +102,17 @@ app.post('/create-invoice', async (req, res) => {
   if (!p) return res.status(400).json({ error: 'Invalid plan' });
 
   const isRu = lang === 'ru';
-  let description = isRu ? 'Все категории, до 10 игроков, без ограничений' : 'All categories, up to 10 players, no limits';
+  let description = isRu
+    ? 'Все категории, до 10 игроков, без ограничений'
+    : 'All categories, up to 10 players, no limits';
 
-  // If user already has monthly — show extension date
   if (plan === 'month' && userId) {
-    const status = getPremiumStatus(userId);
+    const status = await getPremiumStatus(userId);
     if (status.isPremium && status.plan === 'month') {
       const d = new Date(status.expiresAt + 30*24*60*60*1000);
-      description = isRu ? `Продление до ${d.toLocaleDateString('ru-RU')}` : `Extends to ${d.toLocaleDateString('en-US')}`;
+      description = isRu
+        ? `Продление до ${d.toLocaleDateString('ru-RU')}`
+        : `Extends to ${d.toLocaleDateString('en-US')}`;
     }
   }
 
@@ -108,13 +131,25 @@ app.post('/create-invoice', async (req, res) => {
     const data = await resp.json();
     if (!data.ok) return res.status(500).json({ error: data.description });
     res.json({ invoiceLink: data.result });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.get('/premium-status', (req, res) => {
+app.get('/premium-status', async (req, res) => {
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: 'No userId' });
-  res.json(getPremiumStatus(userId));
+  const status = await getPremiumStatus(userId);
+  res.json(status);
+});
+
+// Admin: manually grant premium (protected by secret)
+app.post('/admin/grant-premium', async (req, res) => {
+  const { secret, userId, plan } = req.body;
+  if (secret !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
+  if (!userId || !plan) return res.status(400).json({ error: 'Missing userId or plan' });
+  const status = await activatePremium(userId, plan);
+  res.json({ ok: true, status });
 });
 
 /* ============================================
@@ -137,16 +172,22 @@ function createRoom(hostWs, hostName, hostAvatar, categories, maxPlayers, gameMo
   };
   rooms.set(code, room);
   hostWs.roomCode = code;
-  setTimeout(() => { if (rooms.has(code)) { broadcast(room, {type:'room_expired'}); rooms.delete(code); } }, 4*60*60*1000);
+  setTimeout(() => {
+    if (rooms.has(code)) { broadcast(room, {type:'room_expired'}); rooms.delete(code); }
+  }, 4*60*60*1000);
   return room;
 }
 
 function broadcast(room, msg, excludeId=null) {
   const data = JSON.stringify(msg);
-  room.players.forEach(p => { if (p.id!==excludeId && p.ws?.readyState===WebSocket.OPEN) p.ws.send(data); });
+  room.players.forEach(p => {
+    if (p.id !== excludeId && p.ws?.readyState === WebSocket.OPEN) p.ws.send(data);
+  });
 }
 
-function sendTo(ws, msg) { if (ws?.readyState===WebSocket.OPEN) ws.send(JSON.stringify(msg)); }
+function sendTo(ws, msg) {
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
 
 function roomPublicState(room) {
   return {
@@ -172,78 +213,87 @@ wss.on('connection', (ws) => {
 });
 
 const heartbeat = setInterval(() => {
-  wss.clients.forEach(ws => { if (!ws.isAlive) { ws.terminate(); return; } ws.isAlive=false; ws.ping(); });
+  wss.clients.forEach(ws => {
+    if (!ws.isAlive) { ws.terminate(); return; }
+    ws.isAlive = false; ws.ping();
+  });
 }, 30000);
 wss.on('close', () => clearInterval(heartbeat));
 
 function handleMessage(ws, msg) {
   switch(msg.type) {
     case 'create_room': {
-      if (!msg.name) return sendTo(ws, {type:'error',code:'NO_NAME'});
+      if (!msg.name) return sendTo(ws, {type:'error', code:'NO_NAME'});
       const room = createRoom(ws, msg.name, msg.avatar||'😀', msg.categories, msg.maxPlayers||5, msg.gameMode||'turns', msg.penalty);
       sendTo(ws, {type:'room_created', state:roomPublicState(room), myId:ws.clientId});
       break;
     }
     case 'join_room': {
       const room = rooms.get(msg.code?.toUpperCase());
-      if (!room)        return sendTo(ws, {type:'error',code:'ROOM_NOT_FOUND'});
-      if (room.started) return sendTo(ws, {type:'error',code:'GAME_STARTED'});
-      if (room.players.length >= room.maxPlayers) return sendTo(ws, {type:'error',code:'ROOM_FULL'});
-      const existing = room.players.find(p => p.name===msg.name);
+      if (!room)        return sendTo(ws, {type:'error', code:'ROOM_NOT_FOUND'});
+      if (room.started) return sendTo(ws, {type:'error', code:'GAME_STARTED'});
+      if (room.players.length >= room.maxPlayers) return sendTo(ws, {type:'error', code:'ROOM_FULL'});
+      const existing = room.players.find(p => p.name === msg.name);
       if (existing) {
-        existing.ws=ws; existing.id=ws.clientId; ws.roomCode=msg.code;
+        existing.ws = ws; existing.id = ws.clientId; ws.roomCode = msg.code;
         sendTo(ws, {type:'rejoined', state:roomPublicState(room), myId:ws.clientId});
         broadcast(room, {type:'player_rejoined', name:msg.name}, ws.clientId);
         return;
       }
-      const player = {id:ws.clientId, name:msg.name, avatar:msg.avatar||'😀', score:0, ws};
-      room.players.push(player); ws.roomCode=msg.code;
+      const player = { id:ws.clientId, name:msg.name, avatar:msg.avatar||'😀', score:0, ws };
+      room.players.push(player); ws.roomCode = msg.code;
       sendTo(ws, {type:'room_joined', state:roomPublicState(room), myId:ws.clientId});
-      broadcast(room, {type:'player_joined', player:{id:ws.clientId,name:msg.name,avatar:msg.avatar||'😀',score:0}, state:roomPublicState(room)}, ws.clientId);
+      broadcast(room, {
+        type:'player_joined',
+        player:{ id:ws.clientId, name:msg.name, avatar:msg.avatar||'😀', score:0 },
+        state:roomPublicState(room),
+      }, ws.clientId);
       break;
     }
     case 'update_settings': {
       const room = rooms.get(ws.roomCode);
-      if (!room||room.hostId!==ws.clientId||room.started) return;
-      ['categories','gameMode','penalty','maxPlayers'].forEach(k => { if (msg[k]!==undefined) room[k]=msg[k]; });
+      if (!room || room.hostId !== ws.clientId || room.started) return;
+      ['categories','gameMode','penalty','maxPlayers'].forEach(k => {
+        if (msg[k] !== undefined) room[k] = msg[k];
+      });
       broadcast(room, {type:'settings_updated', state:roomPublicState(room)});
       break;
     }
     case 'start_game': {
       const room = rooms.get(ws.roomCode);
-      if (!room||room.hostId!==ws.clientId) return;
-      if (room.players.length<2) return sendTo(ws, {type:'error',code:'NEED_MORE_PLAYERS'});
-      if (msg.gameMode)  room.gameMode=msg.gameMode;
-      if (msg.penalty!==undefined) room.penalty=msg.penalty;
-      if (msg.categories) room.categories=msg.categories;
-      room.started=true; room.currentIdx=0; room.round=1; room.turn=1; room.usedCards={};
-      room.players.forEach(p => { p.score=0; });
+      if (!room || room.hostId !== ws.clientId) return;
+      if (room.players.length < 2) return sendTo(ws, {type:'error', code:'NEED_MORE_PLAYERS'});
+      if (msg.gameMode)            room.gameMode   = msg.gameMode;
+      if (msg.penalty !== undefined) room.penalty  = msg.penalty;
+      if (msg.categories)          room.categories = msg.categories;
+      room.started = true; room.currentIdx = 0; room.round = 1; room.turn = 1; room.usedCards = {};
+      room.players.forEach(p => { p.score = 0; });
       broadcast(room, {type:'game_started', state:roomPublicState(room)});
       break;
     }
     case 'pick_type': {
       const room = rooms.get(ws.roomCode);
-      if (!room||!room.started) return;
-      if (room.players[room.currentIdx]?.id!==ws.clientId) return;
+      if (!room || !room.started) return;
+      if (room.players[room.currentIdx]?.id !== ws.clientId) return;
       broadcast(room, {type:'type_picked', cardType:msg.cardType, cardText:msg.cardText, playerId:ws.clientId});
       break;
     }
     case 'task_result': {
       const room = rooms.get(ws.roomCode);
-      if (!room||!room.started) return;
-      if (room.players[room.currentIdx]?.id!==ws.clientId) return;
-      const delta = msg.result==='complete' ? 2 : -1;
+      if (!room || !room.started) return;
+      if (room.players[room.currentIdx]?.id !== ws.clientId) return;
+      const delta = msg.result === 'complete' ? 2 : -1;
       room.players[room.currentIdx].score += delta;
       room.turn++;
-      if (room.turn>room.players.length) { room.turn=1; room.round++; }
-      room.currentIdx = (room.currentIdx+1) % room.players.length;
+      if (room.turn > room.players.length) { room.turn = 1; room.round++; }
+      room.currentIdx = (room.currentIdx + 1) % room.players.length;
       broadcast(room, {type:'turn_result', result:msg.result, delta, state:roomPublicState(room)});
       break;
     }
     case 'reaction': {
       const room = rooms.get(ws.roomCode);
       if (!room) return;
-      const player = room.players.find(p => p.id===ws.clientId);
+      const player = room.players.find(p => p.id === ws.clientId);
       if (player) broadcast(room, {type:'reaction', emoji:msg.emoji, name:player.name, avatar:player.avatar}, ws.clientId);
       break;
     }
@@ -257,21 +307,25 @@ function handleDisconnect(ws) {
   if (!code) return;
   const room = rooms.get(code);
   if (!room) return;
-  const idx = room.players.findIndex(p => p.id===ws.clientId);
-  if (idx===-1) return;
+  const idx = room.players.findIndex(p => p.id === ws.clientId);
+  if (idx === -1) return;
   const player = room.players[idx];
   if (!room.started) {
-    room.players.splice(idx,1);
-    if (room.players.length===0) { rooms.delete(code); return; }
-    if (room.hostId===ws.clientId) { room.hostId=room.players[0].id; broadcast(room,{type:'host_changed',newHostId:room.hostId}); }
+    room.players.splice(idx, 1);
+    if (!room.players.length) { rooms.delete(code); return; }
+    if (room.hostId === ws.clientId) {
+      room.hostId = room.players[0].id;
+      broadcast(room, {type:'host_changed', newHostId:room.hostId});
+    }
     broadcast(room, {type:'player_left', name:player.name, state:roomPublicState(room)});
     return;
   }
-  player.ws=null;
+  player.ws = null;
   broadcast(room, {type:'player_offline', name:player.name, playerId:ws.clientId});
-  const allOffline = room.players.every(p => !p.ws||p.ws.readyState!==WebSocket.OPEN);
+  const allOffline = room.players.every(p => !p.ws || p.ws.readyState !== WebSocket.OPEN);
   if (allOffline) setTimeout(() => {
-    if (rooms.has(code) && rooms.get(code).players.every(p => !p.ws||p.ws.readyState!==WebSocket.OPEN)) rooms.delete(code);
+    if (rooms.has(code) && rooms.get(code).players.every(p => !p.ws || p.ws.readyState !== WebSocket.OPEN))
+      rooms.delete(code);
   }, 10*60*1000);
 }
 
@@ -279,13 +333,14 @@ function handleDisconnect(ws) {
    TELEGRAM BOT WEBHOOK
 ============================================ */
 async function handleBotWebhook(req, res) {
-  res.json({ok:true});
+  res.json({ ok: true });
   const update = req.body;
 
   if (update.pre_checkout_query) {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerPreCheckoutQuery`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({pre_checkout_query_id:update.pre_checkout_query.id, ok:true}),
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pre_checkout_query_id: update.pre_checkout_query.id, ok: true }),
     });
     return;
   }
@@ -294,10 +349,11 @@ async function handleBotWebhook(req, res) {
     const userId  = String(update.message.from.id);
     const payload = update.message.successful_payment.invoice_payload;
     const plan    = payload.includes('forever') ? 'forever' : 'month';
-    const status  = activatePremium(userId, plan);
-    const expireStr = status.expiresAt ? new Date(status.expiresAt).toLocaleDateString('ru-RU') : null;
+    const status  = await activatePremium(userId, plan);
+    const expireStr = status.expiresAt
+      ? new Date(status.expiresAt).toLocaleDateString('ru-RU') : null;
     await botSend(update.message.chat.id, {
-      text: plan==='forever'
+      text: plan === 'forever'
         ? '🎉 Premium активирован навсегда!\nВсе категории разблокированы ⭐'
         : `🎉 Premium активирован!\nДействует до: ${expireStr} ⭐\nДля продления купи снова — дни добавятся.`,
     });
@@ -305,14 +361,20 @@ async function handleBotWebhook(req, res) {
   }
 
   if (!update?.message?.text) return;
-  const {chat, text} = update.message;
-  if (text.startsWith('/start')) await botSend(chat.id, botStartMessage());
-  else if (text==='/help')     await botSend(chat.id, botHelpMessage());
-  else if (text==='/premium')  {
-    const status = getPremiumStatus(String(update.message.from.id));
-    const expireStr = status.expiresAt ? `до ${new Date(status.expiresAt).toLocaleDateString('ru-RU')}` : 'навсегда';
+  const { chat, text, from } = update.message;
+
+  if (text.startsWith('/start')) {
+    await botSend(chat.id, botStartMessage());
+  } else if (text === '/help') {
+    await botSend(chat.id, botHelpMessage());
+  } else if (text === '/premium') {
+    const status = await getPremiumStatus(String(from.id));
+    const expireStr = status.expiresAt
+      ? `до ${new Date(status.expiresAt).toLocaleDateString('ru-RU')}` : 'навсегда';
     await botSend(chat.id, {
-      text: status.isPremium ? `⭐ Premium активен ${expireStr}!` : '❌ Premium не активен',
+      text: status.isPremium
+        ? `⭐ Premium активен ${expireStr}!`
+        : '❌ Premium не активен',
     });
   }
 }
@@ -321,7 +383,12 @@ function botStartMessage() {
   return {
     text: '🔥 *Правда или Действие*\n\nНажми кнопку ниже чтобы начать игру!',
     parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: [[{ text:'🎮 Открыть игру', web_app:{url:process.env.WEBAPP_URL||'https://truthdare-dusky.vercel.app'} }]] },
+    reply_markup: {
+      inline_keyboard: [[{
+        text: '🎮 Открыть игру',
+        web_app: { url: process.env.WEBAPP_URL || 'https://truthdare-dusky.vercel.app' },
+      }]],
+    },
   };
 }
 
@@ -336,14 +403,22 @@ async function botSend(chatId, payload) {
   if (!BOT_TOKEN) return;
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({chat_id:chatId, ...payload}),
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, ...payload }),
     });
   } catch(e) { console.error('[Bot]', e.message); }
 }
 
-server.listen(PORT, () => {
-  console.log(`\n🔥 ToD Server on port ${PORT}`);
-  console.log(`   Premium users: ${Object.keys(premiumDB).length}`);
-  console.log(`   Bot: ${BOT_TOKEN ? '✅' : '❌'}\n`);
+/* ============================================
+   START
+============================================ */
+initDB().then(() => {
+  server.listen(PORT, () => {
+    console.log(`\n🔥 ToD Server on port ${PORT}`);
+    console.log(`   Bot: ${BOT_TOKEN ? '✅' : '❌ not set'}\n`);
+  });
+}).catch(e => {
+  console.error('[DB] Init failed:', e.message);
+  process.exit(1);
 });
