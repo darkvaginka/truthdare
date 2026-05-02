@@ -812,7 +812,8 @@ body::before {
   <div id="guestWait" style="display:none">
     <div class="card" style="text-align:center;padding:24px">
       <div style="font-size:40px;margin-bottom:12px;animation:pulse 1.5s infinite">⏳</div>
-      <div style="font-weight:700" data-i="waiting-host">Ждём пока хост начнёт игру...</div>
+      <div style="font-weight:700" id="guestWaitMsg">Ждём игроков...</div>
+      <div style="font-size:12px;color:var(--text2);margin-top:6px" id="guestWaitSub">Хост начнёт игру когда все войдут</div>
     </div>
   </div>
   <div class="spacer-16"></div>
@@ -1251,7 +1252,7 @@ const T = {
     'copy-code':     'Скопировать код',
     'waiting-players':'Ожидаем игроков',
     'btn-start-game':'Начать игру',
-    'waiting-host':  'Ждём хоста...',
+    'waiting-host':  'Ждём игроков...',
     'hdr-spin':      'Чья очередь?',
     'round':         'Раунд', 'turn': 'Ход', 'players': 'Игроков',
     'btn-spin':      'Крутить!',
@@ -1368,7 +1369,7 @@ const T = {
     'copy-code':     'Copy Code',
     'waiting-players':'Waiting for players',
     'btn-start-game':'Start Game',
-    'waiting-host':  'Waiting for host...',
+    'waiting-host':  'Waiting for players...',
     'hdr-spin':      'Whose turn?',
     'round': 'Round', 'turn': 'Turn', 'players': 'Players',
     'btn-spin':      'Spin!',
@@ -2459,9 +2460,11 @@ function createRoom() {
     renderLobbySlots();
     updateLobbyStart();
     go('s-lobby');
-    // Demo: simulate guests
-    setTimeout(() => simulateGuestJoin(lang==='ru'?'Алекс':'Alex'), 2000);
-    setTimeout(() => simulateGuestJoin(lang==='ru'?'Маша':'Mary'), 4500);
+    // Demo: simulate guests only when no real server
+    if (!WS_URL) {
+      setTimeout(() => simulateGuestJoin(lang==='ru'?'Алекс':'Alex'), 2000);
+      setTimeout(() => simulateGuestJoin(lang==='ru'?'Маша':'Mary'), 4500);
+    }
   }
 }
 
@@ -2517,14 +2520,11 @@ function joinRoom() {
       wsSend({ type: 'join_room', code, name, avatar: state.myAvatar });
     });
   } else {
-    // Demo mode
-    if (GAME.players.length === 0) {
-      GAME.players = [{ id:'host', name:'Хост', avatar:'😎', score:0 }];
-    }
-    GAME.players.push({ id: name, name, avatar: state.myAvatar, score: 0 });
-    GAME.scores[name] = 0;
+    // Demo mode — no fake host, just show waiting screen
+    GAME.players = [{ id: name, name, avatar: state.myAvatar, score: 0 }];
+    GAME.scores  = { [name]: 0 };
     document.getElementById('lobbyCode').textContent = code;
-    document.getElementById('lobbyCount').textContent = ` ${GAME.players.length}/?`;
+    document.getElementById('lobbyCount').textContent = ` 1/?`;
     document.getElementById('hostControls').style.display = 'none';
     document.getElementById('guestWait').style.display = '';
     renderLobbySlots();
@@ -2542,23 +2542,28 @@ function leaveLobby() {
 
 function shareInvite() {
   const code = state.roomCode || document.getElementById('lobbyCode').textContent;
-  const appUrl = (typeof WEBAPP_URL !== 'undefined' && WEBAPP_URL) || window.location.href;
-  const msg  = lang === 'ru'
-    ? `🔥 Правда или Действие! Код: ${code}\n${appUrl}`
-    : `🔥 Truth or Dare! Code: ${code}\n${appUrl}`;
+  // Always share clean bot link — never raw Vercel URL with tokens
+  const botLink = 'https://t.me/trutdare_bot/Play';
+  const text = lang === 'ru'
+    ? `🔥 Сыграем в Правду или Действие?\nКод комнаты: ${code}\nВходи: ${botLink}`
+    : `🔥 Let's play Truth or Dare!\nRoom code: ${code}\nJoin: ${botLink}`;
+
   const tg = window.Telegram?.WebApp;
   if (tg?.openTelegramLink) {
-    tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(appUrl)}&text=${encodeURIComponent(`Код: ${code}`)}`);
+    // Share via Telegram — opens forward/share dialog with clean text
+    const shareText = encodeURIComponent(text);
+    const shareUrl  = encodeURIComponent(botLink);
+    tg.openTelegramLink(`https://t.me/share/url?url=${shareUrl}&text=${encodeURIComponent(lang==='ru' ? `🔥 Код комнаты: ${code}` : `🔥 Room code: ${code}`)}`);
+  } else if (navigator.share) {
+    navigator.share({ title: 'Truth or Dare', text, url: botLink });
   } else if (navigator.clipboard) {
-    navigator.clipboard.writeText(msg).then(() => toast(t('toast-copied')));
+    navigator.clipboard.writeText(text).then(() => toast(t('toast-copied')));
   } else {
     toast(code);
   }
 }
 
 /* ============================================
-   START GAME (HOST)
-============================================ *//* ============================================
    START GAME (HOST)
 ============================================ */
 /* ============================================
