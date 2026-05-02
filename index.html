@@ -2235,9 +2235,10 @@ function setMax(n) {
 /* ============================================
    WEBSOCKET CLIENT
 ============================================ */
-// In production set this to your deployed server URL
-// e.g. 'wss://tod-server.railway.app'
-// In demo mode (no server) we use local simulation
+// Production server URLs — hardcoded for deployment
+const BACKEND_URL = 'https://truthdare-production.up.railway.app';
+const WEBAPP_URL  = 'https://truthdare-dusky.vercel.app';
+
 const WS_URL = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL)
   ? BACKEND_URL.replace(/^http/, 'ws')
   : null;
