@@ -162,11 +162,12 @@ function genCode() {
   return Array.from({length:4}, () => chars[Math.floor(Math.random()*chars.length)]).join('');
 }
 
-function createRoom(hostWs, hostName, hostAvatar, categories, maxPlayers, gameMode, penalty) {
+function createRoom(hostWs, hostName, hostAvatar, categories, maxPlayers, gameMode, penalty, hostIsPremium) {
   let code; do { code = genCode(); } while (rooms.has(code));
   const room = {
     code, hostId: hostWs.clientId, maxPlayers, gameMode,
     penalty: penalty||null, categories: categories||['friends','family'],
+    hostIsPremium: hostIsPremium||false,
     players: [{ id: hostWs.clientId, name: hostName, avatar: hostAvatar, score: 0, ws: hostWs }],
     started: false, currentIdx: 0, round: 1, turn: 1, usedCards: {}, createdAt: Date.now(),
   };
@@ -194,6 +195,7 @@ function roomPublicState(room) {
     code: room.code, gameMode: room.gameMode, penalty: room.penalty,
     categories: room.categories, maxPlayers: room.maxPlayers, started: room.started,
     currentIdx: room.currentIdx, round: room.round, turn: room.turn,
+    hostIsPremium: room.hostIsPremium || false,
     players: room.players.map(p => ({ id:p.id, name:p.name, avatar:p.avatar, score:p.score })),
   };
 }
@@ -224,7 +226,7 @@ function handleMessage(ws, msg) {
   switch(msg.type) {
     case 'create_room': {
       if (!msg.name) return sendTo(ws, {type:'error', code:'NO_NAME'});
-      const room = createRoom(ws, msg.name, msg.avatar||'😀', msg.categories, msg.maxPlayers||5, msg.gameMode||'turns', msg.penalty);
+      const room = createRoom(ws, msg.name, msg.avatar||'😀', msg.categories, msg.maxPlayers||5, msg.gameMode||'turns', msg.penalty, msg.hostIsPremium||false);
       sendTo(ws, {type:'room_created', state:roomPublicState(room), myId:ws.clientId});
       break;
     }
