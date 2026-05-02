@@ -691,7 +691,7 @@ body::before {
     <button class="btn btn-primary" onclick="go('s-create')">
       <span>🎮</span> <span data-i="btn-create-room">Создать комнату</span>
     </button>
-    <button class="btn btn-ghost" onclick="go('s-join')">
+    <button class="btn btn-ghost" onclick="openJoinScreen()">
       <span>🔗</span> <span data-i="btn-join-room">Войти по коду</span>
     </button>
     <button class="btn btn-outline" onclick="go('s-solo')">
@@ -2359,6 +2359,9 @@ function handleServerMsg(msg) {
       break;
 
     case 'turn_result':
+      // Reset per-turn counters on new turn
+      _turnTruthUsed = 0;
+      _turnDareUsed  = 0;
       applyServerState(msg.state);
       initGameScreen();
       break;
@@ -2528,6 +2531,11 @@ function joinRoom() {
     renderLobbySlots();
     go('s-lobby');
   }
+}
+
+function openJoinScreen() {
+  document.getElementById('joinCode').value = '';
+  go('s-join');
 }
 
 function leaveLobby() {
@@ -2931,9 +2939,12 @@ function renderPenaltyBanner() {
 }
 
 function endMyTurn() {
-  // In WS mode send skip (pass turn) to server; locally just advance
-  if (WS_URL) { wsSend({ type: 'task_result', result: 'skip' }); }
-  else { advanceTurn(); }
+  // Send turn end to server — this advances to next player
+  if (WS_URL) {
+    wsSend({ type: 'task_result', result: 'complete' });
+  } else {
+    advanceTurn();
+  }
 }
 
 function autoPickCard() {
@@ -3024,8 +3035,15 @@ function completeTask() {
   haptic('success');
   toast(t('toast-complete'));
   if (WS_URL) {
-    wsSend({ type: 'task_result', result: 'complete' });
-    // score updated by server via turn_result
+    if (_gameMode === '2t1d') {
+      // In 2t1d: update local counter and go back to turn screen
+      // Only advance when player clicks "End turn"
+      const p = GAME.players[GAME.currentIdx];
+      p.score += 2; GAME.scores[p.name] = p.score;
+      renderTurnScreen(); go('s-wheel');
+    } else {
+      wsSend({ type: 'task_result', result: 'complete' });
+    }
   } else {
     const p = GAME.players[GAME.currentIdx];
     p.score += 2; GAME.scores[p.name] = p.score;
@@ -3040,7 +3058,13 @@ function refuseTask() {
   } else {
     toast(t('toast-refuse'));
     if (WS_URL) {
-      wsSend({ type: 'task_result', result: 'refuse' });
+      if (_gameMode === '2t1d') {
+        const p = GAME.players[GAME.currentIdx];
+        p.score -= 1; GAME.scores[p.name] = p.score;
+        renderTurnScreen(); go('s-wheel');
+      } else {
+        wsSend({ type: 'task_result', result: 'refuse' });
+      }
     } else {
       const p = GAME.players[GAME.currentIdx];
       p.score -= 1; GAME.scores[p.name] = p.score;
