@@ -1,0 +1,3305 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Truth or Dare</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* ========================================
+   DESIGN SYSTEM
+======================================== */
+:root {
+  --bg:        #08090f;
+  --bg2:       #0f1020;
+  --surface:   #141528;
+  --surface2:  #1c1e35;
+  --border:    rgba(255,255,255,0.07);
+  --border2:   rgba(255,255,255,0.12);
+
+  --truth:     #4f8ef7;
+  --truth-dk:  #1a3a7a;
+  --truth-glow:rgba(79,142,247,0.4);
+
+  --dare:      #f74f6b;
+  --dare-dk:   #7a1a2a;
+  --dare-glow: rgba(247,79,107,0.4);
+
+  --gold:      #f5b731;
+  --gold-dk:   rgba(245,183,49,0.15);
+  --green:     #22c55e;
+
+  --text:      #eeeeff;
+  --text2:     #7878aa;
+  --text3:     #4a4a70;
+
+  --radius:    20px;
+  --radius-sm: 12px;
+  --radius-lg: 28px;
+
+  --font-display: 'Syne', sans-serif;
+  --font-body:    'Nunito', sans-serif;
+}
+
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+  position: relative;
+}
+
+/* Animated background gradient */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background:
+    radial-gradient(ellipse 60% 50% at 20% 10%, rgba(79,142,247,0.07) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 80% 90%, rgba(247,79,107,0.07) 0%, transparent 60%);
+  pointer-events: none; z-index: 0;
+}
+
+/* ========================================
+   SCREEN SYSTEM
+======================================== */
+.screen {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+  overflow-y: auto; overflow-x: hidden;
+  z-index: 1;
+  padding: 0 16px 32px;
+  opacity: 0; pointer-events: none;
+  transform: translateY(12px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.screen.active {
+  opacity: 1; pointer-events: auto;
+  transform: translateY(0);
+}
+.screen.exit {
+  opacity: 0; transform: translateY(-12px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* ========================================
+   TYPOGRAPHY
+======================================== */
+.display {
+  font-family: var(--font-display);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+.label {
+  font-family: var(--font-display);
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--text2);
+}
+
+/* ========================================
+   ANIMATIONS
+======================================== */
+@keyframes fadeUp   { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:none} }
+@keyframes scaleIn  { from{opacity:0;transform:scale(0.9)} to{opacity:1;transform:scale(1)} }
+@keyframes pulse    { 0%,100%{transform:scale(1)} 50%{transform:scale(1.04)} }
+@keyframes spin     { to{transform:rotate(360deg)} }
+@keyframes shimmer  { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+@keyframes glow-t   { 0%,100%{box-shadow:0 0 20px var(--truth-glow)} 50%{box-shadow:0 0 40px var(--truth-glow)} }
+@keyframes glow-d   { 0%,100%{box-shadow:0 0 20px var(--dare-glow)} 50%{box-shadow:0 0 40px var(--dare-glow)} }
+@keyframes float    { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+@keyframes cardShow { from{opacity:0;transform:scale(0.88) rotate(-2deg)} to{opacity:1;transform:scale(1) rotate(0)} }
+
+.anim-fade-up   { animation: fadeUp  0.35s ease both; }
+.anim-scale-in  { animation: scaleIn 0.3s ease both; }
+.anim-float     { animation: float 3s ease-in-out infinite; }
+
+/* ========================================
+   HEADER
+======================================== */
+.hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 0 12px;
+  flex-shrink: 0;
+}
+.hdr-logo {
+  font-family: var(--font-display);
+  font-size: 17px; font-weight: 800;
+  display: flex; align-items: center; gap: 6px;
+}
+.hdr-logo .dot-t { color: var(--truth); }
+.hdr-logo .dot-d { color: var(--dare); }
+
+.icon-btn {
+  width: 40px; height: 40px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 18px;
+  transition: transform 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.icon-btn:active { transform: scale(0.88); background: var(--surface); }
+
+/* ========================================
+   LANG TOGGLE
+======================================== */
+.lang-toggle {
+  display: flex;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.lang-btn {
+  padding: 6px 12px;
+  font-family: var(--font-display);
+  font-size: 12px; font-weight: 700;
+  cursor: pointer; border: none;
+  background: transparent; color: var(--text2);
+  transition: all 0.2s;
+}
+.lang-btn.active {
+  background: linear-gradient(135deg, var(--truth), #7c6bf7);
+  color: white;
+}
+
+/* ========================================
+   BUTTONS
+======================================== */
+.btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 16px 20px;
+  border-radius: var(--radius);
+  border: none; cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 15px; font-weight: 700;
+  width: 100%; transition: transform 0.15s, box-shadow 0.15s;
+  position: relative; overflow: hidden;
+  letter-spacing: -0.01em;
+}
+.btn:active { transform: scale(0.96); }
+.btn::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: rgba(255,255,255,0);
+  transition: background 0.15s;
+}
+.btn:active::after { background: rgba(255,255,255,0.08); }
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--truth) 0%, #7c6bf7 100%);
+  color: white;
+  box-shadow: 0 4px 24px rgba(79,142,247,0.35);
+}
+.btn-primary:active { box-shadow: 0 2px 12px rgba(79,142,247,0.2); }
+
+.btn-danger {
+  background: linear-gradient(135deg, var(--dare) 0%, #f7826e 100%);
+  color: white;
+  box-shadow: 0 4px 24px rgba(247,79,107,0.35);
+}
+
+.btn-gold {
+  background: linear-gradient(135deg, #f5b731 0%, #f57f31 100%);
+  color: #1a0a00;
+  box-shadow: 0 4px 20px rgba(245,183,49,0.35);
+}
+
+.btn-ghost {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border2);
+  box-shadow: none;
+}
+
+.btn-outline {
+  background: transparent;
+  color: var(--text2);
+  border: 1px solid var(--border);
+  font-size: 13px; padding: 12px;
+}
+
+.btn-truth-big {
+  background: linear-gradient(135deg, #1a3a80 0%, var(--truth) 100%);
+  color: white;
+  box-shadow: 0 6px 32px var(--truth-glow);
+  padding: 22px; font-size: 17px;
+  border-radius: var(--radius-lg);
+}
+.btn-dare-big {
+  background: linear-gradient(135deg, #7a1a2a 0%, var(--dare) 100%);
+  color: white;
+  box-shadow: 0 6px 32px var(--dare-glow);
+  padding: 22px; font-size: 17px;
+  border-radius: var(--radius-lg);
+}
+
+.btn-stack { display: flex; flex-direction: column; gap: 10px; }
+.btn-row   { display: flex; gap: 10px; }
+.btn-row .btn { flex: 1; }
+
+/* ========================================
+   CARDS / SURFACES
+======================================== */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+.card + .card { margin-top: 10px; }
+
+/* ========================================
+   HOME HERO
+======================================== */
+.hero-wrap {
+  display: flex; flex-direction: column;
+  align-items: center; text-align: center;
+  padding: 28px 0 32px;
+}
+.hero-icon {
+  font-size: 80px;
+  margin-bottom: 20px;
+  display: block;
+}
+.hero-title {
+  font-size: clamp(26px,7vw,34px);
+  margin-bottom: 10px;
+  background: linear-gradient(135deg, #fff 0%, var(--truth) 50%, var(--dare) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.hero-sub { color: var(--text2); font-size: 14px; max-width: 260px; }
+
+/* ========================================
+   FEATURE LIST
+======================================== */
+.feat-list { display: flex; flex-direction: column; gap: 8px; }
+.feat {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface2); border-radius: var(--radius-sm);
+  padding: 11px 14px; border: 1px solid var(--border);
+  font-size: 13px;
+}
+.feat-icon { font-size: 18px; flex-shrink: 0; }
+.feat-locked { color: var(--text3); }
+.feat .badge {
+  margin-left: auto; font-family: var(--font-display);
+  font-size: 10px; font-weight: 700; padding: 3px 8px;
+  border-radius: 6px; flex-shrink: 0;
+}
+.badge-free { background: rgba(34,197,94,0.2); color: var(--green); }
+.badge-pro  { background: var(--gold-dk); color: var(--gold); }
+
+/* ========================================
+   INPUT
+======================================== */
+.input-wrap { position: relative; }
+.input {
+  width: 100%; padding: 14px 16px;
+  background: var(--surface2);
+  border: 1.5px solid var(--border2);
+  border-radius: var(--radius);
+  color: var(--text); font-size: 15px;
+  font-family: var(--font-body);
+  outline: none; transition: border-color 0.2s;
+}
+.input:focus { border-color: var(--truth); }
+.input::placeholder { color: var(--text3); }
+.input-row { display: flex; gap: 10px; }
+.input-row .input { flex: 1; }
+
+/* ========================================
+   CATEGORY GRID
+======================================== */
+.cat-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.cat-card {
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 12px 14px;
+  cursor: pointer; text-align: center;
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+  position: relative; overflow: hidden;
+}
+.cat-card.sel {
+  border-color: var(--truth);
+  background: rgba(79,142,247,0.08);
+}
+.cat-card.locked { opacity: 0.55; cursor: pointer; }
+.cat-card:active { transform: scale(0.95); }
+.cat-emoji  { font-size: 36px; display: block; margin-bottom: 8px; }
+.cat-name   {
+  font-family: var(--font-display); font-size: 12px; font-weight: 700;
+  line-height: 1.3; color: var(--text);
+}
+.cat-count  { font-size: 11px; color: var(--text2); margin-top: 3px; }
+.cat-badge  {
+  position: absolute; top: 8px; right: 8px;
+  font-family: var(--font-display); font-size: 9px; font-weight: 700;
+  padding: 2px 7px; border-radius: 6px;
+}
+.cat-badge.free { background: rgba(34,197,94,0.25); color: var(--green); }
+.cat-badge.pro  { background: var(--gold-dk); color: var(--gold); }
+
+/* ========================================
+   PLAYERS LIST
+======================================== */
+.players-list { display: flex; flex-direction: column; gap: 8px; }
+.player-row {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface2); border-radius: var(--radius-sm);
+  padding: 11px 14px; border: 1px solid var(--border);
+}
+.p-avatar {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--truth), #7c6bf7);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; flex-shrink: 0;
+}
+.p-name   { flex: 1; font-weight: 700; }
+.p-score  { font-family: var(--font-display); font-size: 12px; color: var(--gold); }
+.p-del    { color: var(--text3); cursor: pointer; font-size: 20px; padding: 2px 4px; transition: color 0.2s; }
+.p-del:hover { color: var(--dare); }
+
+/* ========================================
+   ROOM SCREEN
+======================================== */
+.room-code-box {
+  background: linear-gradient(135deg, rgba(79,142,247,0.12), rgba(124,107,247,0.08));
+  border: 1.5px solid rgba(79,142,247,0.25);
+  border-radius: var(--radius-lg);
+  padding: 24px; text-align: center;
+  margin-bottom: 16px;
+}
+.room-code {
+  font-family: var(--font-display);
+  font-size: 44px; font-weight: 800;
+  letter-spacing: 8px; color: var(--truth);
+  text-shadow: 0 0 30px var(--truth-glow);
+}
+.room-code-label { font-size: 12px; color: var(--text2); margin-top: 6px; }
+
+.waiting-slots {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 8px; margin-bottom: 16px;
+}
+.slot {
+  background: var(--surface2);
+  border: 1.5px dashed var(--border2);
+  border-radius: var(--radius-sm);
+  padding: 14px 10px; text-align: center;
+}
+.slot.filled {
+  border-style: solid; border-color: var(--truth);
+  background: rgba(79,142,247,0.08);
+}
+.slot-avatar { font-size: 26px; display: block; margin-bottom: 4px; }
+.slot-name { font-size: 12px; font-weight: 700; }
+.slot-empty { font-size: 22px; opacity: 0.3; }
+
+.connecting-dot {
+  display: inline-block; width: 8px; height: 8px;
+  background: var(--green); border-radius: 50%;
+  animation: pulse 1.2s ease-in-out infinite;
+  margin-right: 6px;
+}
+
+/* ========================================
+   WHEEL
+======================================== */
+.wheel-wrap {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 12px 0 20px;
+}
+.wheel-outer {
+  position: relative;
+  width: min(300px, 85vw); height: min(300px, 85vw);
+  margin-bottom: 20px;
+}
+.wheel-pointer {
+  position: absolute; top: -14px; left: 50%;
+  transform: translateX(-50%);
+  font-size: 26px; z-index: 5;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6));
+}
+#wheelCanvas { border-radius: 50%; display: block; }
+.wheel-shadow {
+  position: absolute; inset: -4px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, var(--truth-glow), var(--dare-glow), var(--truth-glow));
+  z-index: -1;
+  animation: spin 4s linear infinite;
+  opacity: 0.6;
+}
+
+/* ========================================
+   GAME CARD
+======================================== */
+.game-card-stage { perspective: 1200px; }
+.game-card {
+  border-radius: var(--radius-lg);
+  padding: 32px 24px;
+  min-height: 210px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center; position: relative; overflow: hidden;
+  cursor: pointer;
+  animation: cardShow 0.4s cubic-bezier(0.34,1.56,0.64,1) both;
+  -webkit-tap-highlight-color: transparent;
+}
+.game-card.truth-card {
+  background: linear-gradient(145deg, #0d1e4a 0%, #1a3a80 40%, #1d4ed8 100%);
+  box-shadow: 0 12px 48px var(--truth-glow), inset 0 1px 0 rgba(255,255,255,0.1);
+  border: 1px solid rgba(79,142,247,0.3);
+}
+.game-card.dare-card {
+  background: linear-gradient(145deg, #4a0d1a 0%, #7a1a2a 40%, #c0233c 100%);
+  box-shadow: 0 12px 48px var(--dare-glow), inset 0 1px 0 rgba(255,255,255,0.1);
+  border: 1px solid rgba(247,79,107,0.3);
+}
+.gc-blob {
+  position: absolute; border-radius: 50%;
+  background: rgba(255,255,255,0.04);
+  pointer-events: none;
+}
+.gc-blob-1 { width: 180px; height: 180px; top: -60px; right: -60px; }
+.gc-blob-2 { width: 120px; height: 120px; bottom: -40px; left: -40px; }
+.gc-type {
+  font-family: var(--font-display);
+  font-size: 10px; font-weight: 700; letter-spacing: 0.2em;
+  text-transform: uppercase; opacity: 0.6; margin-bottom: 14px;
+}
+.gc-text {
+  font-family: var(--font-display);
+  font-size: clamp(16px,4.5vw,21px); font-weight: 700;
+  line-height: 1.45; color: #fff;
+}
+.gc-hint { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 12px; }
+
+/* ========================================
+   CHOICE BUTTONS
+======================================== */
+.choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.choice-btn {
+  aspect-ratio: 1;
+  border-radius: var(--radius-lg);
+  border: none; cursor: pointer;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px;
+  font-family: var(--font-display); font-size: 15px; font-weight: 800;
+  transition: transform 0.15s, box-shadow 0.15s;
+  animation: scaleIn 0.3s ease both;
+}
+.choice-btn:active { transform: scale(0.93); }
+.choice-btn.truth {
+  background: linear-gradient(145deg, #0d1e4a, var(--truth));
+  color: white; box-shadow: 0 8px 32px var(--truth-glow);
+  animation-delay: 0.05s;
+}
+.choice-btn.dare {
+  background: linear-gradient(145deg, #4a0d1a, var(--dare));
+  color: white; box-shadow: 0 8px 32px var(--dare-glow);
+  animation-delay: 0.1s;
+}
+.choice-emoji { font-size: 46px; line-height: 1; }
+
+/* ========================================
+   CURRENT PLAYER BADGE
+======================================== */
+.cp-badge {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: var(--radius); padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.cp-av {
+  width: 48px; height: 48px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--truth), #7c6bf7);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; flex-shrink: 0;
+}
+.cp-av.dare { background: linear-gradient(135deg, var(--dare-dk), var(--dare)); }
+.cp-label { font-size: 11px; color: var(--text2); margin-bottom: 2px; }
+.cp-name  { font-family: var(--font-display); font-size: 16px; font-weight: 800; }
+.cp-role  { margin-left: auto; }
+
+/* ========================================
+   ROUND INFO BAR
+======================================== */
+.round-bar {
+  display: flex; justify-content: space-between;
+  background: var(--surface2); border-radius: var(--radius-sm);
+  padding: 10px 16px; margin-bottom: 14px;
+  border: 1px solid var(--border);
+}
+.round-bar-item { text-align: center; }
+.rbi-val { font-family: var(--font-display); font-size: 14px; font-weight: 800; }
+.rbi-lbl { font-size: 10px; color: var(--text2); }
+
+/* ========================================
+   SCOREBOARD
+======================================== */
+.score-row {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface2); border-radius: var(--radius-sm);
+  padding: 13px 16px; margin-bottom: 8px;
+  border: 1px solid var(--border);
+  animation: fadeUp 0.3s ease both;
+}
+.score-row:nth-child(1) { animation-delay: 0s; }
+.score-row:nth-child(2) { animation-delay: 0.05s; }
+.score-row:nth-child(3) { animation-delay: 0.1s; }
+.score-rank { width: 28px; font-family: var(--font-display); font-size: 14px; text-align: center; }
+.score-rank.gold   { color: #fbbf24; }
+.score-rank.silver { color: #9ca3af; }
+.score-rank.bronze { color: #b45309; }
+.score-pts { margin-left: auto; font-family: var(--font-display); font-size: 14px; color: var(--gold); }
+
+/* ========================================
+   PREMIUM MODAL
+======================================== */
+.modal-bg {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(10px);
+  display: flex; align-items: flex-end; justify-content: center;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.25s;
+}
+.modal-bg.open { opacity: 1; pointer-events: auto; }
+.modal-sheet {
+  background: var(--surface);
+  border-radius: 28px 28px 0 0;
+  border-top: 1px solid var(--border2);
+  padding: 12px 20px 32px;
+  width: 100%; max-width: 420px;
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
+}
+.modal-bg.open .modal-sheet { transform: none; }
+.modal-handle {
+  width: 40px; height: 4px;
+  background: var(--border2); border-radius: 2px;
+  margin: 0 auto 20px;
+}
+
+.premium-hero {
+  text-align: center; padding: 16px 0 20px;
+  background: radial-gradient(ellipse at top, rgba(245,183,49,0.12) 0%, transparent 70%);
+  border-radius: var(--radius); margin-bottom: 16px;
+}
+.premium-icon { font-size: 52px; display: block; margin-bottom: 10px; }
+.premium-title { font-size: 22px; margin-bottom: 4px; color: var(--gold); }
+.premium-sub { font-size: 13px; color: var(--text2); }
+
+.price-grid { display: grid; grid-template-columns: 3fr 2fr; gap: 10px; margin: 16px 0 10px; }
+
+/* ========================================
+   DIVIDER / MISC
+======================================== */
+.divider { height: 1px; background: var(--border); margin: 16px 0; }
+.spacer-8  { height: 8px; }
+.spacer-16 { height: 16px; }
+.spacer-12 { height: 12px; }
+.mt-4 { margin-top: 4px; }
+
+.section-label {
+  font-family: var(--font-display);
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--text2); margin-bottom: 10px; margin-top: 6px;
+}
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 88px; left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 12px; padding: 10px 18px;
+  font-size: 13px; font-weight: 600;
+  z-index: 200; white-space: nowrap;
+  pointer-events: none;
+  opacity: 0; transition: opacity 0.2s, transform 0.2s;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Join mode indicator */
+.mode-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: 20px; padding: 5px 12px;
+  font-size: 12px; font-weight: 600; color: var(--text2);
+}
+
+@keyframes confettiFall {
+  0%   { transform: translateY(0) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(200px) rotate(720deg); opacity: 0; }
+}
+@keyframes winnerPop {
+  0%   { transform: scale(0.5); opacity: 0; }
+  70%  { transform: scale(1.08); }
+  100% { transform: scale(1); opacity: 1; }
+}
+</style>
+</head>
+<body>
+
+<!-- =============================
+  SCREEN: HOME
+============================= -->
+<div id="s-home" class="screen active">
+  <div class="hdr">
+    <div class="hdr-logo">
+      <span class="dot-t">T</span><span style="color:var(--text2);font-weight:400">or</span><span class="dot-d">D</span>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <div class="lang-toggle">
+        <button class="lang-btn active" onclick="setLang('ru',this)">RU</button>
+        <button class="lang-btn" onclick="setLang('en',this)">EN</button>
+      </div>
+      <div class="icon-btn" onclick="go('s-settings')">⚙️</div>
+    </div>
+  </div>
+
+  <div class="hero-wrap anim-fade-up">
+    <span class="hero-icon anim-float">🔥</span>
+    <h1 class="display hero-title" data-i="hero-title">Правда или<br>Действие</h1>
+    <p class="hero-sub" data-i="hero-sub">Игра для друзей, семьи и пар — у каждого свой телефон</p>
+  </div>
+
+  <div class="btn-stack anim-fade-up" style="animation-delay:0.1s">
+    <button class="btn btn-primary" onclick="go('s-create')">
+      <span>🎮</span> <span data-i="btn-create-room">Создать комнату</span>
+    </button>
+    <button class="btn btn-ghost" onclick="go('s-join')">
+      <span>🔗</span> <span data-i="btn-join-room">Войти по коду</span>
+    </button>
+    <button class="btn btn-outline" onclick="go('s-solo')">
+      <span>👤</span> <span data-i="btn-solo">Соло режим</span>
+    </button>
+    <button class="btn" style="background:var(--surface2);border:1px dashed var(--border2);color:var(--text2);font-size:13px;padding:12px" onclick="quickDemo()">
+      ⚡ <span data-i="btn-demo">Быстрый демо (3 игрока)</span>
+    </button>
+  </div>
+
+  <div class="spacer-16"></div>
+  <div class="section-label" data-i="included">Бесплатно включено</div>
+  <div class="feat-list anim-fade-up" style="animation-delay:0.2s">
+    <div class="feat"><span class="feat-icon">👫</span> <span data-i="f1">2 категории: Друзья + Семья</span> <span class="badge badge-free">FREE</span></div>
+    <div class="feat"><span class="feat-icon">🎰</span> <span data-i="f2">Колесо удачи + карточки</span> <span class="badge badge-free">FREE</span></div>
+    <div class="feat"><span class="feat-icon">👥</span> <span data-i="f3">До 5 игроков в комнате</span> <span class="badge badge-free">FREE</span></div>
+    <div class="feat feat-locked"><span class="feat-icon">🔥</span> <span data-i="f4">+4 горячие категории</span> <span class="badge badge-pro">⭐ PRO</span></div>
+    <div class="feat feat-locked"><span class="feat-icon">✍️</span> <span data-i="f5">Свои вопросы + AI-генерация</span> <span class="badge badge-pro">⭐ PRO</span></div>
+  </div>
+  <div class="spacer-16"></div>
+  <button class="btn btn-gold" onclick="openPremium()">⭐ <span data-i="unlock-all">Разблокировать всё</span></button>
+  <div class="spacer-16"></div>
+</div>
+
+<!-- =============================
+  SCREEN: CREATE ROOM
+============================= -->
+<div id="s-create" class="screen">
+  <div class="hdr">
+    <div class="icon-btn" onclick="go('s-home')">←</div>
+    <div class="hdr-logo" data-i="hdr-new-room">Новая комната</div>
+    <div style="width:40px"></div>
+  </div>
+
+  <div class="section-label" data-i="your-name">Твоё имя</div>
+  <div class="input-row" style="margin-bottom:16px">
+    <input class="input" id="hostName" data-ph="your-name-ph" placeholder="Твоё имя..." maxlength="20">
+  </div>
+
+  <div class="section-label" data-i="categories">Категории</div>
+  <div class="cat-grid" id="createCatGrid"></div>
+
+  <div class="spacer-12"></div>
+  <div class="section-label" data-i="max-players">Максимум игроков</div>
+  <div style="display:flex;gap:8px;margin-bottom:16px">
+    <button class="btn btn-ghost" style="flex:1;padding:12px" id="max3" onclick="setMax(3)">3</button>
+    <button class="btn btn-ghost" style="flex:1;padding:12px" id="max5" onclick="setMax(5)">5</button>
+    <button class="btn btn-ghost" style="flex:1;padding:12px;opacity:0.5" id="max8" onclick="setMax(8)">8 ⭐</button>
+    <button class="btn btn-ghost" style="flex:1;padding:12px;opacity:0.5" id="max10" onclick="setMax(10)">10 ⭐</button>
+  </div>
+
+  <button class="btn btn-primary" onclick="createRoom()">
+    🚀 <span data-i="btn-start-room">Создать и пригласить</span>
+  </button>
+  <div class="spacer-16"></div>
+</div>
+
+<!-- =============================
+  SCREEN: JOIN ROOM
+============================= -->
+<div id="s-join" class="screen">
+  <div class="hdr">
+    <div class="icon-btn" onclick="go('s-home')">←</div>
+    <div class="hdr-logo" data-i="hdr-join">Войти в комнату</div>
+    <div style="width:40px"></div>
+  </div>
+
+  <div class="spacer-16"></div>
+  <div class="section-label" data-i="your-name">Твоё имя</div>
+  <input class="input" id="guestName" data-ph="your-name-ph" placeholder="Твоё имя..." maxlength="20" style="margin-bottom:16px">
+
+  <div class="section-label" data-i="room-code-label">Код комнаты</div>
+  <input class="input" id="joinCode" placeholder="XXXX" maxlength="4"
+    style="text-align:center;font-family:var(--font-display);font-size:32px;font-weight:800;letter-spacing:8px;margin-bottom:20px;text-transform:uppercase"
+    oninput="this.value=this.value.toUpperCase()">
+
+  <button class="btn btn-primary" onclick="joinRoom()">
+    🔗 <span data-i="btn-join">Войти</span>
+  </button>
+  <div class="spacer-16"></div>
+</div>
+
+<!-- =============================
+  SCREEN: LOBBY (waiting room)
+============================= -->
+<div id="s-lobby" class="screen">
+  <div class="hdr">
+    <div class="icon-btn" onclick="leaveLobby()">←</div>
+    <div class="hdr-logo" data-i="hdr-lobby">Лобби</div>
+    <div class="icon-btn" onclick="shareInvite()">📤</div>
+  </div>
+
+  <div class="room-code-box anim-scale-in">
+    <div class="label" data-i="room-code-title">Код комнаты</div>
+    <div class="room-code" id="lobbyCode">----</div>
+    <div class="room-code-label" data-i="room-code-hint">Покажи друзьям — они введут этот код</div>
+    <div class="spacer-8"></div>
+    <button class="btn btn-ghost" style="max-width:200px;margin:0 auto;padding:10px;font-size:13px" onclick="shareInvite()">
+      📋 <span data-i="copy-code">Скопировать код</span>
+    </button>
+  </div>
+
+  <div class="section-label">
+    <span class="connecting-dot"></span>
+    <span data-i="waiting-players">Ожидаем игроков</span>
+    <span id="lobbyCount" style="color:var(--text)"> 1/?</span>
+  </div>
+
+  <div class="waiting-slots" id="lobbySlots"></div>
+
+  <div id="hostControls">
+    <div class="section-label" data-i="categories">Категории</div>
+    <div class="cat-grid" id="lobbyCatGrid" style="margin-bottom:16px"></div>
+    <button class="btn btn-primary" id="lobbyStartBtn" onclick="goToPenaltySetup()" style="opacity:0.5" disabled>
+      🎮 <span data-i="btn-start-game">Начать игру</span>
+    </button>
+  </div>
+  <div id="guestWait" style="display:none">
+    <div class="card" style="text-align:center;padding:24px">
+      <div style="font-size:40px;margin-bottom:12px;animation:pulse 1.5s infinite">⏳</div>
+      <div style="font-weight:700" data-i="waiting-host">Ждём пока хост начнёт игру...</div>
+    </div>
+  </div>
+  <div class="spacer-16"></div>
+</div>
+
+<!-- =============================
+  SCREEN: PENALTY SETUP
+============================= -->
+<div id="s-penalty" class="screen">
+  <div class="hdr">
+    <div class="icon-btn" onclick="go('s-lobby')">←</div>
+    <div class="hdr-logo">⚖️ <span data-i="hdr-penalty">Наказание</span></div>
+    <div style="width:40px"></div>
+  </div>
+
+  <p style="color:var(--text2);font-size:13px;margin-bottom:20px" data-i="penalty-desc">
+    Договоритесь заранее — что происходит если кто-то отказался от задания. Правило одно для всех.
+  </p>
+
+  <!-- Preset chips -->
+  <div class="section-label" data-i="penalty-presets">Готовые варианты</div>
+  <div id="penaltyChips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px"></div>
+
+  <!-- Custom input -->
+  <div class="section-label" data-i="penalty-custom">Или своё наказание</div>
+  <div style="display:flex;gap:10px;margin-bottom:8px">
+    <input class="input" id="penaltyInput" data-ph="penalty-ph" placeholder="Например: отжаться 10 раз..." maxlength="60" style="flex:1">
+    <button class="add-chip-btn" onclick="setPenaltyCustom()" style="
+      width:50px;height:52px;border-radius:var(--radius);background:var(--truth);
+      border:none;color:white;font-size:22px;cursor:pointer;flex-shrink:0;
+      transition:transform 0.15s;display:flex;align-items:center;justify-content:center">✓</button>
+  </div>
+
+  <!-- No penalty option -->
+  <div id="noPenaltyToggle" onclick="toggleNoPenalty()" style="
+    display:flex;align-items:center;gap:12px;
+    background:var(--surface2);border:2px solid var(--border);
+    border-radius:var(--radius);padding:14px 16px;
+    cursor:pointer;margin-bottom:20px;transition:border-color 0.2s,background 0.2s">
+    <span style="font-size:24px">🤝</span>
+    <div style="flex:1">
+      <div style="font-weight:700;font-size:14px" data-i="no-penalty-title">Без наказания</div>
+      <div style="font-size:12px;color:var(--text2)" data-i="no-penalty-sub">Отказ просто снимает очко</div>
+    </div>
+    <div id="noPenaltyCheck" style="
+      width:24px;height:24px;border-radius:50%;
+      border:2px solid var(--border2);
+      display:flex;align-items:center;justify-content:center;
+      font-size:13px;transition:all 0.2s;flex-shrink:0"></div>
+  </div>
+
+  <!-- Current selection preview -->
+  <div id="penaltyPreview" style="
+    background:linear-gradient(135deg,rgba(79,142,247,0.1),rgba(124,107,247,0.08));
+    border:1.5px solid rgba(79,142,247,0.2);
+    border-radius:var(--radius);padding:16px;
+    margin-bottom:20px;display:none">
+    <div class="label" style="margin-bottom:6px" data-i="penalty-selected">Выбрано наказание</div>
+    <div id="penaltyPreviewText" style="font-family:var(--font-display);font-size:15px;font-weight:700;color:var(--truth)"></div>
+  </div>
+
+  <button class="btn btn-primary" onclick="goToGameMode()">
+    ▶️ <span data-i="btn-next">Далее — режим игры</span>
+  </button>
+  <div class="spacer-16"></div>
+</div>
+
+<!-- =============================
+  SCREEN: GAME MODE SELECT
+============================= -->
+<div id="s-gamemode" class="screen">
+  <div class="hdr">
+    <div class="icon-btn" onclick="go('s-penalty')">←</div>
+    <div class="hdr-logo">🎲 <span data-i="hdr-gamemode">Режим раздачи</span></div>
+    <div style="width:40px"></div>
+  </div>
+
+  <p style="color:var(--text2);font-size:13px;margin-bottom:20px" data-i="gamemode-desc">
+    Как будут выдаваться карточки каждому игроку?
+  </p>
+
+  <div id="gameModeList" style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px"></div>
+
+  <button class="btn btn-primary" onclick="hostStartGame()">
+    🎮 <span data-i="btn-start-game">Начать игру!</span>
+  </button>
+  <div class="spacer-16"></div>
+</div>
+
+<!-- =============================
+  SCREEN: TURN (replaces wheel)
+============================= -->
+<div id="s-wheel" class="screen">
+  <div class="hdr">
+    <div class="icon-btn" onclick="confirmExit()">←</div>
+    <div class="hdr-logo" id="turnHdrTitle">🎮 Игра</div>
+    <div class="icon-btn" onclick="showScores()">🏆</div>
+  </div>
+
+  <!-- Round bar -->
+  <div class="round-bar" id="roundBar">
+    <div class="round-bar-item">
+      <div class="rbi-val" id="rb-round">1</div>
+      <div class="rbi-lbl" data-i="round">Раунд</div>
+    </div>
+    <div class="round-bar-item">
+      <div class="rbi-val" id="rb-turn">1</div>
+      <div class="rbi-lbl" data-i="turn">Ход</div>
+    </div>
+    <div class="round-bar-item">
+      <div class="rbi-val" id="rb-players">0</div>
+      <div class="rbi-lbl" data-i="players">Игроков</div>
+    </div>
+  </div>
+
+  <!-- Penalty reminder -->
+  <div id="penaltyBannerWrap"></div>
+
+  <!-- Current player card -->
+  <div style="
+    background:linear-gradient(135deg,rgba(79,142,247,0.12),rgba(124,107,247,0.08));
+    border:1.5px solid rgba(79,142,247,0.22);
+    border-radius:var(--radius-lg);
+    padding:24px 20px;
+    text-align:center;
+    margin-bottom:16px;
+  ">
+    <div style="font-size:11px;color:var(--text2);font-family:var(--font-display);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:10px" data-i="current-player-label">Сейчас ходит</div>
+    <div id="turnPlayerAvatar" style="font-size:52px;margin-bottom:8px;line-height:1">😀</div>
+    <div id="turnPlayerName" style="font-family:var(--font-display);font-size:22px;font-weight:800">—</div>
+    <!-- Next player hint -->
+    <div id="nextPlayerHint" style="margin-top:10px;font-size:12px;color:var(--text3)"></div>
+  </div>
+
+  <!-- Mode-specific action area -->
+  <div id="turnActionArea"></div>
+</div>
+
+<!-- =============================
+  SCREEN: CHOICE (free mode)
+============================= -->
+<div id="s-choice" class="screen">
+  <div class="hdr">
+    <div style="width:40px"></div>
+    <div class="hdr-logo" data-i="your-turn">Твой ход!</div>
+    <div style="width:40px"></div>
+  </div>
+
+  <div class="cp-badge anim-fade-up">
+    <div class="cp-av" id="choiceAv">😀</div>
+    <div>
+      <div class="cp-label" data-i="choosing">Выбирает</div>
+      <div class="cp-name" id="choiceName">—</div>
+    </div>
+  </div>
+
+  <p style="text-align:center;color:var(--text2);font-size:14px;margin-bottom:14px" data-i="choose-prompt">Что выбираешь?</p>
+
+  <div class="choice-grid">
+    <button class="choice-btn truth" onclick="pickType('truth')">
+      <span class="choice-emoji">🧠</span>
+      <span data-i="truth">Правда</span>
+    </button>
+    <button class="choice-btn dare" onclick="pickType('dare')">
+      <span class="choice-emoji">🎯</span>
+      <span data-i="dare">Действие</span>
+    </button>
+  </div>
+
+  <div class="spacer-12"></div>
+  <button class="btn btn-outline" onclick="skipTurn()">
+    ⏭ <span data-i="skip-turn">Пропустить (−1 очко)</span>
+  </button>
+</div>
+
+<!-- =============================
+  SCREEN: WATCHING (other player's turn)
+============================= -->
+<div id="s-watch" class="screen">
+  <div class="hdr">
+    <div style="width:40px"></div>
+    <div class="hdr-logo" data-i="their-turn">Чужой ход</div>
+    <div style="width:40px"></div>
+  </div>
+  <div class="cp-badge">
+    <div class="cp-av" id="watchAv">😀</div>
+    <div>
+      <div class="cp-label" data-i="now-choosing">Сейчас выбирает</div>
+      <div class="cp-name" id="watchName">—</div>
+    </div>
+  </div>
+  <div class="card" style="text-align:center;padding:32px">
+    <div style="font-size:48px;margin-bottom:16px;animation:pulse 1.5s infinite">👀</div>
+    <div style="font-weight:700;font-size:16px" data-i="watching-msg">Следи за игрой!</div>
+    <div style="font-size:13px;color:var(--text2);margin-top:8px" data-i="watching-sub">Скоро твоя очередь...</div>
+  </div>
+  <div class="spacer-16"></div>
+  <div id="watchCardArea" style="display:none">
+    <div class="game-card-stage">
+      <div class="game-card" id="watchCard">
+        <div class="gc-blob gc-blob-1"></div>
+        <div class="gc-blob gc-blob-2"></div>
+        <div class="gc-type" id="watchCardType">ПРАВДА</div>
+        <div class="gc-text" id="watchCardText">...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =============================
+  SCREEN: CARD (play card)
+============================= -->
+<div id="s-card" class="screen">
+  <div class="hdr">
+    <div style="width:40px"></div>
+    <div class="hdr-logo" id="cardHdrTitle">🧠 Правда</div>
+    <div style="width:40px"></div>
+  </div>
+
+  <div class="cp-badge">
+    <div class="cp-av" id="cardAv">😀</div>
+    <div>
+      <div class="cp-label" data-i="answering">Отвечает</div>
+      <div class="cp-name" id="cardPlayerName">—</div>
+    </div>
+  </div>
+
+  <div class="game-card-stage">
+    <div class="game-card" id="mainCard" onclick="rerollCard()">
+      <div class="gc-blob gc-blob-1"></div>
+      <div class="gc-blob gc-blob-2"></div>
+      <div class="gc-type" id="mainCardType">ПРАВДА</div>
+      <div class="gc-text" id="mainCardText">...</div>
+      <div class="gc-hint" data-i="tap-reroll">Нажми чтобы заменить</div>
+    </div>
+  </div>
+
+  <div class="spacer-12"></div>
+  <div class="btn-row">
+    <button class="btn btn-ghost" onclick="rerollCard()">🔄 <span data-i="other-card">Другая</span></button>
+    <button class="btn btn-primary" onclick="completeTask()">✅ <span data-i="done-task">Выполнено! (+2)</span></button>
+  </div>
+  <div class="spacer-8"></div>
+  <button class="btn btn-outline" onclick="refuseTask()">😅 <span data-i="refused">Отказался (−1)</span></button>
+</div>
+
+<!-- =============================
+  SCREEN: SCORES
+============================= -->
+<div id="s-scores" class="screen">
+  <div class="hdr">
+    <div class="icon-btn" onclick="go('s-wheel')">←</div>
+    <div class="hdr-logo">🏆 <span data-i="scores">Счёт</span></div>
+    <div style="width:40px"></div>
+  </div>
+  <div id="scoresList"></div>
+  <div class="spacer-16"></div>
+  <div class="btn-stack">
+    <button class="btn btn-primary" onclick="go('s-wheel')">▶️ <span data-i="continue">Продолжить</span></button>
+    <button class="btn btn-outline" onclick="endGameFinal()">🏁 <span data-i="end-game">Завершить игру</span></button>
+  </div>
+  <div class="spacer-16"></div>
+</div>
+
+<!-- =============================
+  SCREEN: SOLO
+============================= -->
+<div id="s-solo" class="screen">
+  <div class="hdr">
+    <div class="icon-btn" onclick="go('s-home')">←</div>
+    <div class="hdr-logo" data-i="solo-mode">Соло режим</div>
+    <div style="width:40px"></div>
+  </div>
+  <p style="color:var(--text2);font-size:13px;margin-bottom:16px" data-i="solo-sub">Нажимай на кнопки — получай случайные карточки</p>
+
+  <div class="btn-row" style="margin-bottom:20px">
+    <button class="btn btn-truth-big" onclick="soloCard('truth')">🧠 <span data-i="truth">Правда</span></button>
+    <button class="btn btn-dare-big"  onclick="soloCard('dare')">🎯 <span data-i="dare">Действие</span></button>
+  </div>
+
+  <div id="soloCardStage" style="display:none" class="game-card-stage">
+    <div class="game-card" id="soloCard">
+      <div class="gc-blob gc-blob-1"></div>
+      <div class="gc-blob gc-blob-2"></div>
+      <div class="gc-type" id="soloCardType">ПРАВДА</div>
+      <div class="gc-text" id="soloCardText">...</div>
+    </div>
+  </div>
+
+  <div id="soloCardBtns" style="display:none;margin-top:12px">
+    <div class="btn-row" style="margin-bottom:8px">
+      <button class="btn btn-ghost" onclick="soloReroll()">🔄 <span data-i="other-card">Другая</span></button>
+      <button class="btn btn-primary" onclick="soloDone()">✅ <span data-i="done-task">Выполнено!</span></button>
+    </div>
+    <button class="btn btn-outline" onclick="soloRefuse()">😅 <span data-i="refused">Отказался</span></button>
+  </div>
+
+  <div class="spacer-12"></div>
+  <div class="section-label" data-i="categories">Категории</div>
+  <div class="cat-grid" id="soloCatGrid"></div>
+  <div class="spacer-16"></div>
+</div>
+
+<!-- =============================
+  SCREEN: SETTINGS
+============================= -->
+<div id="s-settings" class="screen">
+  <div class="hdr">
+    <div class="icon-btn" onclick="go('s-home')">←</div>
+    <div class="hdr-logo" data-i="settings">Настройки</div>
+    <div style="width:40px"></div>
+  </div>
+
+  <div class="card">
+    <div class="label" data-i="account" style="margin-bottom:12px">Аккаунт</div>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+      <div style="width:54px;height:54px;border-radius:50%;background:linear-gradient(135deg,var(--truth),#7c6bf7);display:flex;align-items:center;justify-content:center;font-size:26px">👤</div>
+      <div>
+        <div style="font-weight:700" id="settingsName">—</div>
+        <div style="font-size:12px;color:var(--text2)" id="settingsPlan" data-i="free-plan">Бесплатный план</div>
+      </div>
+      <div style="margin-left:auto">
+        <span id="settingsBadge" class="badge badge-free">FREE</span>
+      </div>
+    </div>
+    <button class="btn btn-gold" onclick="openPremium()">⭐ <span data-i="get-premium">Получить Premium</span></button>
+  </div>
+
+  <div class="card">
+    <div class="label" data-i="language" style="margin-bottom:12px">Язык</div>
+    <div class="lang-toggle" style="width:100%">
+      <button class="lang-btn" id="set-lang-ru" onclick="setLang('ru')" style="flex:1">🇷🇺 Русский</button>
+      <button class="lang-btn" id="set-lang-en" onclick="setLang('en')" style="flex:1">🇬🇧 English</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label" style="margin-bottom:8px">About</div>
+    <div style="font-size:13px;color:var(--text2);line-height:1.7" data-i="about-text">
+      Truth or Dare · v1.0<br>Игра для весёлых компаний 🔥<br>Поддержка: @tod_support
+    </div>
+  </div>
+  <div class="spacer-16"></div>
+</div>
+
+<!-- =============================
+  MODAL: PREMIUM
+============================= -->
+<div class="modal-bg" id="premiumModal" onclick="closePremium()">
+  <div class="modal-sheet" onclick="event.stopPropagation()">
+    <div class="modal-handle"></div>
+    <div class="premium-hero">
+      <span class="premium-icon">⭐</span>
+      <h2 class="display premium-title" data-i="premium-title">Premium</h2>
+      <p class="premium-sub" data-i="premium-sub">Полный доступ ко всему</p>
+    </div>
+    <div class="feat-list">
+      <div class="feat"><span class="feat-icon">🔥</span> <span data-i="pr1">Категория «Горячее»</span></div>
+      <div class="feat"><span class="feat-icon">💑</span> <span data-i="pr2">Для пар — флирт и романтика</span></div>
+      <div class="feat"><span class="feat-icon">😈</span> <span data-i="pr3">Экстрим — не для слабаков</span></div>
+      <div class="feat"><span class="feat-icon">🎭</span> <span data-i="pr4">Сезонные паки (Halloween, NY…)</span></div>
+      <div class="feat"><span class="feat-icon">👥</span> <span data-i="pr5">До 10 игроков в комнате</span></div>
+      <div class="feat"><span class="feat-icon">✍️</span> <span data-i="pr6">Свои вопросы + AI-генерация</span></div>
+      <div class="feat"><span class="feat-icon">🚫</span> <span data-i="pr7">Без рекламы навсегда</span></div>
+    </div>
+    <div class="price-grid">
+      <button class="btn btn-gold" onclick="buyPremium('forever')" style="flex-direction:column;gap:2px">
+        <span style="font-size:16px">⭐ 299 Stars</span>
+        <span style="font-size:11px;font-weight:400;opacity:0.8" data-i="forever">Навсегда</span>
+      </button>
+      <button class="btn btn-ghost" onclick="buyPremium('month')" style="flex-direction:column;gap:2px">
+        <span style="font-size:15px">49/мес</span>
+        <span style="font-size:10px;font-weight:400;opacity:0.6">Stars</span>
+      </button>
+    </div>
+    <button class="btn btn-outline" onclick="closePremium()" data-i="not-now">Не сейчас</button>
+  </div>
+</div>
+
+<!-- MODAL: EXIT CONFIRM -->
+<div class="modal-bg" id="exitModal" onclick="closeModal('exitModal')">
+  <div class="modal-sheet" onclick="event.stopPropagation()">
+    <div class="modal-handle"></div>
+    <p style="text-align:center;font-size:18px;font-weight:700;margin-bottom:8px" data-i="exit-title">Покинуть игру?</p>
+    <p style="text-align:center;font-size:13px;color:var(--text2);margin-bottom:20px" data-i="exit-sub">Прогресс будет потерян</p>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeModal('exitModal')" data-i="stay">Остаться</button>
+      <button class="btn btn-danger" onclick="doExit()" data-i="exit">Выйти</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================
+   I18N
+============================================ */
+const T = {
+  ru: {
+    'hero-title':    'Правда или\nДействие',
+    'hero-sub':      'Игра для друзей, семьи и пар — у каждого свой телефон',
+    'btn-create-room':'Создать комнату',
+    'btn-join-room': 'Войти по коду',
+    'btn-solo':      'Соло режим',
+    'included':      'Бесплатно включено',
+    'f1': '2 категории: Друзья + Семья',
+    'f2': 'Колесо удачи + карточки',
+    'f3': 'До 5 игроков в комнате',
+    'f4': '+4 горячие категории',
+    'f5': 'Свои вопросы + AI-генерация',
+    'unlock-all':    'Разблокировать всё',
+    'hdr-new-room':  'Новая комната',
+    'your-name':     'Твоё имя',
+    'your-name-ph':  'Твоё имя...',
+    'categories':    'Категории',
+    'max-players':   'Максимум игроков',
+    'btn-start-room':'Создать и пригласить',
+    'hdr-join':      'Войти в комнату',
+    'room-code-label':'Код комнаты',
+    'btn-join':      'Войти',
+    'hdr-lobby':     'Лобби',
+    'room-code-title':'Код комнаты',
+    'room-code-hint':'Покажи друзьям — они введут этот код',
+    'copy-code':     'Скопировать код',
+    'waiting-players':'Ожидаем игроков',
+    'btn-start-game':'Начать игру',
+    'waiting-host':  'Ждём хоста...',
+    'hdr-spin':      'Чья очередь?',
+    'round':         'Раунд', 'turn': 'Ход', 'players': 'Игроков',
+    'btn-spin':      'Крутить!',
+    'your-turn':     'Твой ход!',
+    'choosing':      'Выбирает',
+    'choose-prompt': 'Что выбираешь?',
+    'truth':         'Правда', 'dare': 'Действие',
+    'skip-turn':     'Пропустить (−1 очко)',
+    'their-turn':    'Чужой ход',
+    'now-choosing':  'Сейчас выбирает',
+    'watching-msg':  'Следи за игрой!',
+    'watching-sub':  'Скоро твоя очередь...',
+    'answering':     'Отвечает',
+    'tap-reroll':    'Нажми чтобы заменить',
+    'other-card':    'Другая',
+    'done-task':     'Выполнено! (+2)',
+    'refused':       'Отказался (−1)',
+    'scores':        'Счёт',
+    'continue':      'Продолжить',
+    'end-game':      'Завершить игру',
+    'solo-mode':     'Соло режим',
+    'solo-sub':      'Нажимай на кнопки — получай случайные карточки',
+    'settings':      'Настройки',
+    'account':       'Аккаунт',
+    'free-plan':     'Бесплатный план',
+    'get-premium':   'Получить Premium',
+    'language':      'Язык',
+    'about-text':    'Truth or Dare · v1.0\nИгра для весёлых компаний 🔥\nПоддержка: @tod_support',
+    'premium-title': 'Premium',
+    'premium-sub':   'Полный доступ ко всему',
+    'pr1':'Категория «Горячее»', 'pr2':'Для пар — флирт', 'pr3':'Экстрим',
+    'pr4':'Сезонные паки (Halloween, NY…)', 'pr5':'До 10 игроков', 'pr6':'Свои вопросы + AI', 'pr7':'Без рекламы',
+    'forever':       'Навсегда',
+    'not-now':       'Не сейчас',
+    'exit-title':    'Покинуть игру?', 'exit-sub': 'Прогресс будет потерян',
+    'stay': 'Остаться', 'exit': 'Выйти',
+    // categories
+    'cat-friends': 'Друзья', 'cat-family': 'Семья',
+    'cat-couples': 'Для пар', 'cat-hot': 'Горячее',
+    'cat-extreme': 'Экстрим', 'cat-halloween': 'Halloween',
+    'cat-newyear': 'Новый год',
+    // game
+    'toast-need-2': 'Нужно минимум 2 игрока!',
+    'toast-enter-name': 'Введи имя!',
+    'toast-enter-code': 'Введи код комнаты!',
+    'toast-complete': '✅ +2 очка! Отлично!',
+    'toast-refuse': '😅 −1 очко за отказ',
+    'toast-skip': '⏭ −1 очко, пропуск',
+    'toast-copied': '📋 Код скопирован!',
+    'btn-demo': 'Быстрый демо (3 игрока)',
+    'solo-done': '✅ Выполнено!',
+    'solo-refused': '😅 Отказался!',
+    'hdr-penalty':      'Наказание за отказ',    'penalty-desc':     'Договоритесь заранее — что происходит если кто-то отказался. Правило одно для всех.',
+    'penalty-presets':  'Готовые варианты',
+    'penalty-custom':   'Или своё наказание',
+    'penalty-ph':       'Например: отжаться 10 раз...',
+    'no-penalty-title': 'Без наказания',
+    'no-penalty-sub':   'Отказ просто снимает очко',
+    'penalty-selected': 'Выбрано наказание',
+    'penalty-active':   '⚖️ Наказание:',
+    'penalty-none-lbl': 'без наказания',
+    'toast-penalty-set':'✅ Наказание установлено!',
+    'toast-penalty-need':'Выбери наказание или «Без наказания»',
+    'refused-penalty':  '😅 Отказался! Наказание:',
+    'hdr-gamemode':     'Режим раздачи',
+    'gamemode-desc':    'Как выдаются карточки каждому игроку?',
+    'btn-next':         'Далее — режим игры',
+    'current-player-label': 'Сейчас ходит',
+    'next-player-lbl':  'Следующий:',
+    'mode-turns-title': 'Свой выбор по очереди',
+    'mode-turns-desc':  'Каждый ходит по кругу и сам выбирает: Правда или Действие',
+    'mode-2t1d-title':  'Не халтурь!',
+    'mode-2t1d-desc':   'Действие можно брать сколько угодно. Правда блокируется если взял её 2 раза подряд — чтобы разблокировать, нужно сделать хотя бы одно действие',
+    'mode-auto-title':  'Рандом',
+    'mode-auto-desc':   'Тип карточки выбирается случайно — судьба решает за тебя',
+    'btn-take-card':    'Взять карточку',
+    'btn-truth-card':   '🧠 Правда',
+    'btn-dare-card':    '🎯 Действие',
+    'truth-left':       'Правд осталось:',
+    'dare-left':        'Действий осталось:',
+    'toast-premium': '⭐ Оплата через Telegram Stars',
+    'toast-premium-ok': '✅ Premium активирован!',
+    'winner': '🏆 Победитель',
+    'spin-result': 'Выпало:',
+  },
+  en: {
+    'hero-title':    'Truth or\nDare',
+    'hero-sub':      'A game for friends, family & couples — everyone on their own phone',
+    'btn-create-room':'Create Room',
+    'btn-join-room': 'Join with Code',
+    'btn-solo':      'Solo Mode',
+    'included':      'Free includes',
+    'f1': '2 categories: Friends + Family',
+    'f2': 'Spin wheel + cards',
+    'f3': 'Up to 5 players per room',
+    'f4': '+4 spicy categories',
+    'f5': 'Custom questions + AI',
+    'unlock-all':    'Unlock Everything',
+    'hdr-new-room':  'New Room',
+    'your-name':     'Your Name',
+    'your-name-ph':  'Your name...',
+    'categories':    'Categories',
+    'max-players':   'Max players',
+    'btn-start-room':'Create & Invite',
+    'hdr-join':      'Join Room',
+    'room-code-label':'Room Code',
+    'btn-join':      'Join',
+    'hdr-lobby':     'Lobby',
+    'room-code-title':'Room Code',
+    'room-code-hint':'Share this code with friends',
+    'copy-code':     'Copy Code',
+    'waiting-players':'Waiting for players',
+    'btn-start-game':'Start Game',
+    'waiting-host':  'Waiting for host...',
+    'hdr-spin':      'Whose turn?',
+    'round': 'Round', 'turn': 'Turn', 'players': 'Players',
+    'btn-spin':      'Spin!',
+    'your-turn':     'Your Turn!',
+    'choosing':      'Choosing',
+    'choose-prompt': 'What do you choose?',
+    'truth': 'Truth', 'dare': 'Dare',
+    'skip-turn':     'Skip (−1 point)',
+    'their-turn':    "Someone's Turn",
+    'now-choosing':  'Now choosing',
+    'watching-msg':  'Watch the game!',
+    'watching-sub':  "Your turn is coming...",
+    'answering':     'Answering',
+    'tap-reroll':    'Tap to get another',
+    'other-card':    'Another',
+    'done-task':     'Done! (+2)',
+    'refused':       'Refused (−1)',
+    'scores':        'Scores',
+    'continue':      'Continue',
+    'end-game':      'End Game',
+    'solo-mode':     'Solo Mode',
+    'solo-sub':      'Tap buttons to get random cards',
+    'settings':      'Settings',
+    'account':       'Account',
+    'free-plan':     'Free plan',
+    'get-premium':   'Get Premium',
+    'language':      'Language',
+    'about-text':    'Truth or Dare · v1.0\nThe fun party game 🔥\nSupport: @tod_support',
+    'premium-title': 'Premium',
+    'premium-sub':   'Full access to everything',
+    'pr1':'Hot category', 'pr2':'Couples — flirt', 'pr3':'Extreme',
+    'pr4':'Seasonal packs (Halloween, NY…)', 'pr5':'Up to 10 players', 'pr6':'Custom Qs + AI', 'pr7':'No ads',
+    'forever': 'Forever',
+    'not-now': 'Not Now',
+    'exit-title': 'Leave game?', 'exit-sub': 'Progress will be lost',
+    'stay': 'Stay', 'exit': 'Exit',
+    'cat-friends': 'Friends', 'cat-family': 'Family',
+    'cat-couples': 'Couples', 'cat-hot': 'Hot',
+    'cat-extreme': 'Extreme', 'cat-halloween': 'Halloween', 'cat-newyear': 'New Year',
+    'toast-need-2': 'Need at least 2 players!',
+    'toast-enter-name': 'Enter your name!',
+    'toast-enter-code': 'Enter room code!',
+    'toast-complete': '✅ +2 points! Great!',
+    'toast-refuse': '😅 −1 point for refusing',
+    'toast-skip': '⏭ −1 point, skipped',
+    'toast-copied': '📋 Code copied!',
+    'btn-demo': 'Quick Demo (3 players)',
+    'solo-done': '✅ Done!',
+    'solo-refused': '😅 Refused!',
+    'hdr-penalty':      'Penalty for refusing',
+    'penalty-desc':     'Agree on the rules upfront — what happens if someone refuses. One rule for everyone.',
+    'penalty-presets':  'Quick options',
+    'penalty-custom':   'Or set your own',
+    'penalty-ph':       'E.g. do 10 push-ups...',
+    'no-penalty-title': 'No penalty',
+    'no-penalty-sub':   'Refusing just costs a point',
+    'penalty-selected': 'Selected penalty',
+    'penalty-active':   '⚖️ Penalty:',
+    'penalty-none-lbl': 'no penalty',
+    'toast-penalty-set':'✅ Penalty set!',
+    'toast-penalty-need':'Choose a penalty or "No penalty"',
+    'refused-penalty':  '😅 Refused! Penalty:',
+    'hdr-gamemode':     'Card Mode',
+    'gamemode-desc':    'How will cards be dealt to each player?',
+    'btn-next':         'Next — game mode',
+    'current-player-label': 'Now playing',
+    'next-player-lbl':  'Next:',
+    'mode-turns-title': 'Your choice, take turns',
+    'mode-turns-desc':  'Players go in order — each picks Truth or Dare themselves',
+    'mode-2t1d-title':  'No Chickening Out!',
+    'mode-2t1d-desc':   'Dare — take as many as you want. Truth gets blocked after 2 in a row — do at least one dare to unlock it again',
+    'mode-auto-title':  'Random',
+    'mode-auto-desc':   'Card type is chosen randomly — fate decides for you',
+    'btn-take-card':    'Get a card',
+    'btn-truth-card':   '🧠 Truth',
+    'btn-dare-card':    '🎯 Dare',
+    'truth-left':       'Truths left:',
+    'dare-left':        'Dares left:',
+    'toast-premium': '⭐ Payment via Telegram Stars',
+    'toast-premium-ok': '✅ Premium activated!',
+    'winner': '🏆 Winner',
+    'spin-result': 'Selected:',
+  }
+};
+
+let lang = 'ru';
+
+function t(key) { return T[lang][key] || T['ru'][key] || key; }
+
+function setLang(l, btn) {
+  lang = l;
+  // update header lang buttons
+  document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  // update settings buttons
+  document.getElementById('set-lang-ru').classList.toggle('active', l === 'ru');
+  document.getElementById('set-lang-en').classList.toggle('active', l === 'en');
+  // re-render all i18n
+  applyI18n();
+  // re-render dynamic content
+  renderCatGrids();
+}
+
+function applyI18n() {
+  document.querySelectorAll('[data-i]').forEach(el => {
+    const key = el.getAttribute('data-i');
+    const val = t(key);
+    if (val !== undefined) el.textContent = val;
+  });
+  document.querySelectorAll('[data-ph]').forEach(el => {
+    el.placeholder = t(el.getAttribute('data-ph'));
+  });
+}
+
+/* ============================================
+   GAME DATA
+============================================ */
+const AVATARS = ['😀','😎','🤩','🥳','😏','🦊','🐺','🐯','🦁','🐻','🦝','🐸'];
+
+const CATEGORIES = [
+  { id:'friends',  emoji:'👫', free:true,  countRU:'55+', countEN:'55+' },
+  { id:'family',   emoji:'👨‍👩‍👧', free:true,  countRU:'40+', countEN:'40+' },
+  { id:'couples',  emoji:'💑', free:false, countRU:'45+', countEN:'45+' },
+  { id:'hot',      emoji:'🔥', free:false, countRU:'50+', countEN:'50+' },
+  { id:'extreme',  emoji:'😈', free:false, countRU:'30+', countEN:'30+' },
+  { id:'halloween',emoji:'🎃', free:false, countRU:'25+', countEN:'25+' },
+];
+
+// Selected solo categories
+let soloCats = ['friends', 'family'];
+// Selected host categories for room
+let roomCats = ['friends', 'family'];
+
+/* ------ CARD CONTENT ------
+   Format: { truth: { catId: [...] }, dare: { catId: [...] } }
+*/
+const CARDS = {
+  truth: {
+    friends: {
+      ru: [
+        "Какой самый странный сон тебе снился?",
+        "Кого из присутствующих ты бы взял на необитаемый остров?",
+        "Что ты делаешь, когда думаешь, что никто не смотрит?",
+        "Расскажи о самом неловком моменте в жизни",
+        "Какую ложь ты говоришь чаще всего?",
+        "Кого здесь ты считаешь самым умным?",
+        "Что тебя раздражает в людях, но ты сам так делаешь?",
+        "Какой твой самый большой страх?",
+        "Ты сплетничал о ком-то из этой комнаты?",
+        "Какой подарок ты тайно ненавидишь?",
+        "Что ел из чужой тарелки тайком?",
+        "Какой поступок ты хотел бы забрать обратно?",
+        "Когда последний раз ты врал кому-то в этой комнате?",
+        "Какое твоё самое постыдное хобби?",
+        "Расскажи секрет, который ты никому не говорил",
+        "Если бы ты мог читать мысли одного человека здесь — кого?",
+        "Какое твоё самое большое сожаление?",
+        "Что ты думаешь о каждом здесь? Скажи честно",
+        "Какую песню ты слушаешь втайне и стесняешься признать?",
+        "Какое самое глупое, что ты делал ради внимания?",
+        "На кого из знаменитостей ты тайно похож характером?",
+        "Что ты никогда бы не съел даже за деньги?",
+        "Какая твоя самая странная привычка дома?",
+        "Кому из этой комнаты ты бы доверил свой телефон без пароля?",
+        "Что тебя пугает в будущем больше всего?",
+        "Какой совет ты давал другим, но сам не следовал?",
+        "Если бы твоя жизнь стала сериалом — какой жанр это был бы?",
+        "Какую вещь ты хранишь, хотя она тебе не нужна?",
+        "Кого из присутствующих ты бы описал одним словом? Каким?",
+        "Какой твой самый нелепый страх?",
+      ],
+      en: [
+        "What's the strangest dream you've ever had?",
+        "Who here would you take to a deserted island?",
+        "What do you do when you think no one is watching?",
+        "Tell us your most embarrassing moment",
+        "What lie do you tell most often?",
+        "Who in this room do you think is the smartest?",
+        "What annoys you about others that you also do yourself?",
+        "What is your biggest fear?",
+        "Have you ever gossiped about someone in this room?",
+        "What gift do you secretly hate?",
+        "What have you eaten off someone else's plate secretly?",
+        "What's one thing you wish you could take back?",
+        "When did you last lie to someone in this room?",
+        "What's your most embarrassing hobby?",
+        "Share a secret you've never told anyone",
+        "If you could read one person's mind here, whose?",
+        "What's your biggest regret?",
+        "What do you really think of everyone here? Be honest",
+        "What song do you secretly listen to and are embarrassed about?",
+        "What's the dumbest thing you've done for attention?",
+        "Which celebrity are you most like in personality?",
+        "What would you never eat even for money?",
+        "What's your weirdest habit at home?",
+        "Who here would you give your phone to without a password?",
+        "What scares you most about the future?",
+        "What advice do you give others but never follow yourself?",
+        "If your life were a TV show, what genre would it be?",
+        "What thing do you keep even though you don't need it?",
+        "Describe each person here in one word. Go around.",
+        "What's your most ridiculous fear?",
+      ],
+    },
+    family: {
+      ru: [
+        "Что ты делал в детстве и думал, что родители не знают?",
+        "Какое твоё любимое семейное воспоминание?",
+        "Если бы можно было поменяться местами с кем-то в семье — с кем?",
+        "Что тебя больше всего раздражает в домашних делах?",
+        "Какой самый смешной случай произошёл на семейном ужине?",
+        "Чью готовку ты тайно считаешь лучшей?",
+        "Что ты хотел бы изменить в семейных традициях?",
+        "Какой семейный секрет ты можешь раскрыть?",
+        "Кого из родственников ты чаще всего имитируешь?",
+        "Что ты никогда не скажешь родителям?",
+        "Какое самое странное семейное правило у вас дома?",
+        "Кто в семье принимает лучшие решения — и почему не ты?",
+        "Какой подарок на день рождения ты хотел, но не получил?",
+        "Что ты брал у кого-то из семьи без спроса и не признавался?",
+        "Если бы семья снималась в реалити-шоу, как бы оно называлось?",
+        "Что тебе говорили в детстве, во что ты верил, а потом оказалось неправдой?",
+        "Какую семейную традицию ты хотел бы отменить?",
+        "Расскажи о случае, когда ты случайно сломал что-то дома",
+        "Что ты никогда не простишь члену семьи — шуточно?",
+        "Кто в семье самый упрямый и почему?",
+      ],
+      en: [
+        "What did you do as a kid thinking your parents didn't know?",
+        "What's your favorite family memory?",
+        "If you could swap places with a family member, who?",
+        "What chore annoys you the most?",
+        "What's the funniest thing that happened at a family dinner?",
+        "Whose cooking do you secretly think is the best?",
+        "What would you change about family traditions?",
+        "What family secret can you reveal?",
+        "Which relative do you imitate most?",
+        "What would you never tell your parents?",
+        "What's the strangest family rule in your home?",
+        "Who makes the best decisions in the family — and why not you?",
+        "What birthday gift did you want but never got?",
+        "What did you borrow from someone in the family without asking?",
+        "If the family had a reality show, what would it be called?",
+        "What were you told as a kid that turned out to be false?",
+        "What family tradition would you eliminate?",
+        "Tell us about a time you accidentally broke something at home",
+        "What's something you'd never forgive a family member for — jokingly?",
+        "Who's the most stubborn in the family and why?",
+      ],
+    },
+    couples: {
+      ru: [
+        "Что тебя привлекло в партнёре с первого взгляда?",
+        "Какой момент ты хотел бы прожить заново?",
+        "Что ты никогда не говорил партнёру, но думал?",
+        "Какая твоя любимая черта партнёра?",
+        "О чём ты мечтаешь вместе?",
+        "Что тебя раздражает в партнёре, но ты молчишь?",
+        "Какой был ваш самый нелепый спор?",
+        "Если бы партнёр был блюдом — каким?",
+        "Когда ты понял, что влюбился?",
+        "Чем тебя удивил партнёр в последний раз?",
+        "Что ты хотел бы изменить в ваших отношениях?",
+        "Какой твой любимый совместный ритуал?",
+        "О чём ты мечтал до встречи с партнёром, что изменилось?",
+        "Если бы вы были персонажами фильма — кто кем был бы?",
+        "Что ты делаешь, что партнёр думает, что ты не делаешь?",
+        "Какое качество партнёра ты хотел бы перенять?",
+        "Расскажи о самом романтичном моменте в ваших отношениях",
+        "Что бы ты сделал если бы партнёр потерял память о вас?",
+        "Как бы ты описал ваши отношения одной песней?",
+        "Что партнёр делает, что тебя смешит, но ты делаешь вид что нет?",
+      ],
+      en: [
+        "What attracted you to your partner at first sight?",
+        "What moment would you relive?",
+        "What have you thought but never told your partner?",
+        "What's your favorite trait of your partner?",
+        "What do you dream about together?",
+        "What annoys you about your partner but you stay quiet about?",
+        "What was your most ridiculous argument?",
+        "If your partner were a dish, what would they be?",
+        "When did you realize you were in love?",
+        "When did your partner last surprise you?",
+        "What would you change about your relationship?",
+        "What's your favorite shared ritual?",
+        "What did you dream of before meeting your partner that changed?",
+        "If you were movie characters, who would each of you be?",
+        "What do you do that your partner thinks you don't?",
+        "What quality of your partner's would you want for yourself?",
+        "Tell us the most romantic moment in your relationship",
+        "What would you do if your partner forgot all their memories of you?",
+        "What one song describes your relationship?",
+        "What does your partner do that makes you laugh but you pretend it doesn't?",
+      ],
+    },
+    hot: {
+      ru: [
+        "Расскажи о своём самом безумном флирте",
+        "Что считаешь самым соблазнительным в людях?",
+        "Какой твой самый смелый поступок в отношениях?",
+        "Опиши идеальное романтическое свидание",
+        "Что тебя заводит больше всего?",
+        "Какой комплимент тебе говорили и ты не забыл до сих пор?",
+        "Кто из знаменитостей кажется тебе самым привлекательным?",
+        "Расскажи о самом неловком свидании",
+        "Что бы ты сделал если бы знал, что никто не узнает?",
+        "Опиши свой идеальный тип человека",
+        "Что ты надеваешь когда хочешь произвести впечатление?",
+        "Какой твой самый смелый романтический жест?",
+        "Что думаешь о флирте с незнакомцами?",
+        "Какую черту в себе ты считаешь самой привлекательной?",
+        "С кем из присутствующих ты бы пошёл на свидание?",
+        "Что для тебя важнее — внешность или характер, честно?",
+        "Какой твой любимый способ флиртовать?",
+        "Как быстро ты влюбляешься?",
+        "Расскажи о самом смелом признании которое ты делал",
+        "Что считаешь красным флагом в отношениях?",
+      ],
+      en: [
+        "Tell us about your wildest flirting experience",
+        "What do you find most seductive in people?",
+        "What's the boldest thing you've done in a relationship?",
+        "Describe your ideal romantic date",
+        "What turns you on the most?",
+        "What's a compliment you received that you still remember?",
+        "Which celebrity do you find most attractive?",
+        "Tell us about your most awkward date",
+        "What would you do if you knew no one would find out?",
+        "Describe your ideal type",
+        "What do you wear when you want to impress someone?",
+        "What's your boldest romantic gesture?",
+        "What do you think about flirting with strangers?",
+        "What trait in yourself do you find most attractive?",
+        "Who here would you go on a date with?",
+        "Honestly — looks or personality, which matters more?",
+        "What's your favorite way to flirt?",
+        "How quickly do you fall in love?",
+        "Tell us about the boldest confession you've ever made",
+        "What's your biggest red flag in a relationship?",
+      ],
+    },
+    extreme: {
+      ru: [
+        "Расскажи самый тёмный секрет, который ты знаешь",
+        "Что ты сделал и никогда никому не признавался?",
+        "Какую ложь ты рассказывал так долго, что сам почти поверил?",
+        "Назови человека здесь, которому ты доверяешь меньше всего",
+        "Что ты готов сделать за миллион рублей?",
+        "Какой самый аморальный поступок ты совершил?",
+        "Чего ты больше всего стыдишься из своего прошлого?",
+        "Если бы твои мысли последние 24 часа были видны всем — что бы изменилось?",
+        "Кого из присутствующих ты обманывал?",
+        "Какой твой самый большой грех?",
+        "Что ты скрываешь от самых близких людей?",
+        "За что тебя могли бы осудить, если бы узнали?",
+        "Какой поступок ты хотел бы взять обратно больше всего?",
+        "Если бы тебя поймали на лжи прямо сейчас — в чём бы это было?",
+        "Что ты украл — физически или метафорически?",
+        "Назови три вещи, о которых ты никогда не расскажешь родителям",
+        "Какой момент в жизни тебя изменил в худшую сторону?",
+        "Есть ли кто-то здесь, кого ты недооцениваешь? Признайся",
+        "Какой был твой самый эгоистичный поступок?",
+        "Что бы ты сделал, если бы был невидимым один день?",
+      ],
+      en: [
+        "Tell the darkest secret you know",
+        "What have you done and never confessed to anyone?",
+        "What lie have you told so long you almost believe it?",
+        "Name someone here you trust the least",
+        "What would you do for a million dollars?",
+        "What's the most immoral thing you've done?",
+        "What from your past are you most ashamed of?",
+        "If your thoughts from the last 24 hours were visible — what would change?",
+        "Who here have you deceived?",
+        "What's your biggest sin?",
+        "What do you hide from your closest people?",
+        "What could people judge you for if they found out?",
+        "What action do you most want to take back?",
+        "If you were caught in a lie right now — what would it be about?",
+        "What have you stolen — physically or metaphorically?",
+        "Name three things you'd never tell your parents",
+        "What moment changed you for the worse?",
+        "Is there someone here you underestimate? Admit it",
+        "What was your most selfish act?",
+        "What would you do if you were invisible for a day?",
+      ],
+    },
+    halloween: {
+      ru: [
+        "Расскажи о самом страшном случае в твоей жизни",
+        "Во что или в кого ты веришь из мистического?",
+        "Какой фильм ужасов тебя напугал больше всего?",
+        "Ты когда-нибудь чувствовал чьё-то присутствие рядом?",
+        "Какой твой самый жуткий сон?",
+        "Есть ли место, куда ты никогда не вернёшься из-за страха?",
+        "Расскажи историю, которую услышал и до сих пор не можешь объяснить",
+        "Если бы ты был монстром — каким?",
+        "Что ты боишься найти в темноте?",
+        "Какой твой самый суеверный ритуал?",
+        "Ты когда-нибудь играл на доске Уиджа или чём-то подобном?",
+        "Какой звук пугает тебя больше всего?",
+        "Если бы ты знал дату своей смерти — ты бы хотел узнать?",
+        "Расскажи о паранормальном случае, которому ты был свидетелем",
+        "В каком хоррор-фильме ты бы выжил?",
+      ],
+      en: [
+        "Tell us about the scariest thing that's happened to you",
+        "What supernatural things do you believe in?",
+        "Which horror movie scared you the most?",
+        "Have you ever felt someone's presence nearby?",
+        "What's your most terrifying nightmare?",
+        "Is there a place you'd never return to because of fear?",
+        "Tell a story you heard that you still can't explain",
+        "If you were a monster, which one?",
+        "What are you afraid to find in the dark?",
+        "What's your most superstitious ritual?",
+        "Have you ever played with a Ouija board?",
+        "What sound scares you most?",
+        "If you knew your death date — would you want to know?",
+        "Tell us about a paranormal experience you witnessed",
+        "Which horror movie would you survive?",
+      ],
+    },
+  },
+  dare: {
+    friends: {
+      ru: [
+        "Сделай 10 отжиманий прямо сейчас",
+        "Позвони случайному человеку из контактов и спой «С днём рождения»",
+        "Напиши маме «Нам надо поговорить» и покажи реакцию",
+        "Поставь самое смешное фото на аватар на 5 минут",
+        "Говори только шёпотом следующие два хода",
+        "Изобрази кого-нибудь здесь — пусть угадают",
+        "Найди фото 3-летней давности и покажи всем",
+        "30 секунд танцуй без музыки с максимальной серьёзностью",
+        "Сделай голосовое с оперным пением и отправь другу",
+        "Попроси кого-нибудь сделать тебе массаж плеч 1 минуту",
+        "5 минут говори только в рифму",
+        "Скажи комплимент каждому игроку за 30 секунд",
+        "Изобрази своего любимого актёра без слов",
+        "Пройди по комнате как модель на подиуме",
+        "Сделай планку 30 секунд",
+        "Напиши статус «Ищу работу» на 5 минут",
+        "Попробуй облизать локоть",
+        "Расскажи стендап-шутку собственного сочинения",
+        "Сделай 20 приседаний прямо сейчас",
+        "Напиши другу слово «Ку» без объяснений",
+        "Изобрази животное — остальные угадывают",
+        "Попробуй удержать улыбку пока кто-то строит тебе рожи",
+        "Напой мелодию без слов — остальные угадывают песню",
+        "Придумай рэп-куплет про кого-нибудь в комнате",
+        "Сделай селфи с самым странным выражением лица",
+        "Произноси все слова задом наперёд 1 минуту",
+        "Изобрази робота на 2 минуты",
+        "Позвони другу и говори только голосом пирата",
+        "Съешь ложку самой острой приправы что есть дома",
+        "Сделай мостик или хотя бы попробуй",
+      ],
+      en: [
+        "Do 10 push-ups right now",
+        "Call a random contact and sing Happy Birthday",
+        "Text your mom 'We need to talk' and show the reaction",
+        "Set the funniest photo as your avatar for 5 minutes",
+        "Speak only in whispers for the next two turns",
+        "Impersonate someone here — let them guess",
+        "Find a photo from 3 years ago and show everyone",
+        "Dance for 30 seconds without music, completely serious",
+        "Send a voice message with opera singing to a friend",
+        "Ask someone to give you a shoulder massage for 1 minute",
+        "Speak only in rhymes for 5 minutes",
+        "Give every player a compliment in 30 seconds",
+        "Impersonate your favorite actor without words",
+        "Walk across the room like a runway model",
+        "Hold a plank for 30 seconds",
+        "Set your status to 'Looking for work' for 5 minutes",
+        "Try to lick your elbow",
+        "Tell an original stand-up joke",
+        "Do 20 squats right now",
+        "Text a friend just 'Hey' with no context",
+        "Imitate an animal — others guess",
+        "Try to keep a straight face while someone makes funny faces at you",
+        "Hum a song — others guess the title",
+        "Make up a rap verse about someone in the room",
+        "Take a selfie with the weirdest expression you can",
+        "Say all your words backwards for 1 minute",
+        "Act like a robot for 2 minutes",
+        "Call a friend speaking only like a pirate",
+        "Eat a spoonful of the spiciest thing available",
+        "Do a backbend — or at least try",
+      ],
+    },
+    family: {
+      ru: [
+        "Изобрази любого члена семьи — пусть угадают",
+        "Позвони бабушке/дедушке прямо сейчас",
+        "Расскажи самый смешной семейный анекдот",
+        "Спой любую детскую песню целиком",
+        "Сделай семейное фото прямо сейчас",
+        "Изобрази как кто-то из семьи готовит",
+        "Напиши записку с комплиментом каждому в комнате",
+        "Покажи самое дорогое сердцу фото на телефоне",
+        "Расскажи историю из детства в лицах",
+        "Спой колыбельную кому-нибудь из комнаты",
+        "Нарисуй портрет кого-нибудь здесь за 30 секунд",
+        "Изобрази как выглядит каждый когда злится",
+        "Покажи самый старый чат в телефоне",
+        "Расскажи о самом неловком семейном застолье",
+        "Придумай и исполни семейный гимн прямо сейчас",
+        "Покажи фото своего детского рисунка если найдёшь",
+        "Сделай доброе дело для кого-то в комнате прямо сейчас",
+        "Изобрази как ты выглядишь по утрам",
+        "Перечисли всех членов семьи и скажи по одному доброму слову",
+        "Обнимись с каждым в комнате",
+      ],
+      en: [
+        "Impersonate a family member — let them guess",
+        "Call your grandparent right now",
+        "Tell the funniest family joke you know",
+        "Sing any children's song all the way through",
+        "Take a family photo right now",
+        "Impersonate how a family member cooks",
+        "Write a compliment note for everyone in the room",
+        "Show the most precious photo on your phone",
+        "Act out a childhood story",
+        "Sing a lullaby to someone in the room",
+        "Draw a portrait of someone here in 30 seconds",
+        "Show how everyone looks when they're angry",
+        "Show the oldest chat on your phone",
+        "Tell us about your most awkward family gathering",
+        "Make up and perform a family anthem right now",
+        "Show a childhood drawing if you can find one",
+        "Do something kind for someone in the room right now",
+        "Show how you look in the morning",
+        "Name every family member and say one kind word about each",
+        "Hug everyone in the room",
+      ],
+    },
+    couples: {
+      ru: [
+        "Скажи партнёру комплимент, который никогда не говорил",
+        "Станцуй с партнёром под любую воображаемую музыку 1 минуту",
+        "Опиши партнёра тремя красивыми словами",
+        "Покажи любимое совместное фото",
+        "Напиши партнёру сообщение с признанием прямо сейчас",
+        "Изобрази как выглядит партнёр когда злится",
+        "Угадай любимый фильм партнёра не спрашивая",
+        "Расскажи историю вашего знакомства с точки зрения партнёра",
+        "Нарисуй портрет партнёра за 30 секунд",
+        "Придумай партнёру новое прозвище прямо сейчас",
+        "Скажи что тебе нравится в партнёре больше всего — вслух при всех",
+        "Покажи переписку с партнёром которой не стыдишься",
+        "Изобрази как выглядит партнёр когда ест",
+        "Расскажи о первом свидании в подробностях",
+        "Напой песню которую ассоциируешь с партнёром",
+        "Найди фото партнёра которое больше всего нравится и объясни почему",
+        "Скажи вслух три вещи которые раздражают в партнёре — с юмором",
+        "Напиши партнёру письмо «на 10 лет вперёд» вслух",
+        "Повтори любимую фразу или словечко партнёра",
+        "Обнимись с партнёром и не отпускай 30 секунд",
+      ],
+      en: [
+        "Tell your partner a compliment you've never said before",
+        "Dance with your partner to imaginary music for 1 minute",
+        "Describe your partner in three beautiful words",
+        "Show your favorite photo together",
+        "Send your partner a love message right now",
+        "Imitate how your partner looks when angry",
+        "Guess your partner's favorite movie without asking",
+        "Tell the story of how you met — from your partner's point of view",
+        "Draw a portrait of your partner in 30 seconds",
+        "Give your partner a new nickname right now",
+        "Say what you love most about your partner — out loud in front of everyone",
+        "Show a text conversation with your partner you're not ashamed of",
+        "Imitate how your partner looks while eating",
+        "Tell the story of your first date in detail",
+        "Hum a song you associate with your partner",
+        "Find the photo of your partner you like most and explain why",
+        "Say three things that annoy you about your partner — with humor",
+        "Write your partner a letter '10 years from now' — out loud",
+        "Repeat your partner's favorite phrase or catchphrase",
+        "Hug your partner and don't let go for 30 seconds",
+      ],
+    },
+    hot: {
+      ru: [
+        "Напиши флиртующее сообщение случайному контакту",
+        "30 секунд смотри в глаза любому здесь не отводя взгляда",
+        "Скажи самый смелый комплимент кому-нибудь в комнате",
+        "Расскажи кто здесь самый привлекательный",
+        "Опиши своё идеальное свидание в деталях",
+        "Пошли голосовое с самым соблазнительным голосом другу",
+        "Изобрази как ты флиртуешь — покажи технику",
+        "Назови три вещи которые делают тебя неотразимым",
+        "Сделай фото с максимально соблазнительным взглядом и покажи",
+        "Расскажи о самом смелом поступке ради понравившегося человека",
+        "Скажи вслух кому из знаменитых людей ты бы написал прямо сейчас",
+        "Изобрази сцену из романтического фильма",
+        "Скажи комплимент каждому здесь — но только искренние",
+        "Покажи самое флиртовое фото в своём телефоне",
+        "Придумай пикап-линию под конкретного человека в комнате",
+        "Расскажи о своём самом удачном свидании",
+        "Сделай романтическое фото с кем-нибудь в комнате",
+        "Напой самую романтичную песню что знаешь",
+        "Скажи что нужно сделать чтобы тебя покорить",
+        "Поменяйся телефонами с кем-нибудь на 30 секунд",
+      ],
+      en: [
+        "Send a flirty message to a random contact",
+        "Stare into anyone's eyes here for 30 seconds without looking away",
+        "Give the boldest compliment to someone in the room",
+        "Say who in the room is most attractive",
+        "Describe your ideal date in detail",
+        "Send a voice message with your most seductive voice to a friend",
+        "Show your flirting technique",
+        "Name three things that make you irresistible",
+        "Take a photo with the most seductive look you can and show it",
+        "Tell about the boldest thing you did for someone you liked",
+        "Say out loud which celebrity you'd message right now",
+        "Act out a scene from a romantic movie",
+        "Give everyone here a compliment — only sincere ones",
+        "Show the most flirty photo on your phone",
+        "Come up with a pickup line for a specific person in the room",
+        "Tell about your most successful date",
+        "Take a romantic photo with someone in the room",
+        "Sing the most romantic song you know",
+        "Say what someone needs to do to win you over",
+        "Swap phones with someone for 30 seconds",
+      ],
+    },
+    extreme: {
+      ru: [
+        "Удали самое неловкое фото из галереи прямо сейчас — или покажи его",
+        "Напиши бывшему «Привет, как дела?» и покажи ответ",
+        "Сними видео в стиле TikTok и выложи прямо сейчас",
+        "Позвони кому-нибудь и молчи 10 секунд когда возьмут трубку",
+        "Покажи последнее фото которое ты снял",
+        "Прочитай вслух последнее голосовое сообщение которое ты получил",
+        "Покажи самый странный предмет в твоей комнате",
+        "Открой галерею и покажи 10-е фото с конца",
+        "Напиши случайному человеку «Я скучаю» без объяснений",
+        "Поставь историю в соцсети с фото прямо сейчас",
+        "Позвони маме и скажи что влюбился в кого-то в этой комнате",
+        "Покажи самое старое фото в телефоне",
+        "Прочитай вслух последние 5 запросов в поиске",
+        "Сделай фото прямо сейчас и поставь на аватар на 10 минут",
+        "Напиши рандомному человеку мем без контекста",
+        "Покажи последний поставленный лайк в соцсетях",
+        "Запиши войс «Я тебя люблю» и отправь рандомному контакту",
+        "Покажи последний скриншот в телефоне",
+        "Выложи фото без фильтров прямо сейчас",
+        "Добавь рандомного человека в друзья в соцсети",
+      ],
+      en: [
+        "Delete the most embarrassing photo or show it to everyone",
+        "Text your ex 'Hey, how are you?' and show the reply",
+        "Make a TikTok-style video and post it right now",
+        "Call someone and stay silent for 10 seconds when they pick up",
+        "Show the last photo you took",
+        "Read out loud the last voice message you received",
+        "Show the strangest object in your room",
+        "Open your gallery and show the 10th photo from the end",
+        "Text a random person 'I miss you' with no explanation",
+        "Post a story on social media with a photo right now",
+        "Call your mom and say you fell for someone in this room",
+        "Show the oldest photo on your phone",
+        "Read your last 5 search queries out loud",
+        "Take a photo right now and set it as your avatar for 10 minutes",
+        "Send a random meme to someone with no context",
+        "Show the last post you liked on social media",
+        "Record a voice message saying 'I love you' and send it to a random contact",
+        "Show the last screenshot on your phone",
+        "Post an unfiltered photo right now",
+        "Send a friend request to a random person on social media",
+      ],
+    },
+    halloween: {
+      ru: [
+        "Притворись что в тебя вселился дух — говори как привидение 2 минуты",
+        "Расскажи страшилку собственного сочинения",
+        "Выключи свет и прочитай стихи страшным голосом",
+        "Изобрази зомби 30 секунд",
+        "Позвони кому-нибудь и замолчи на 10 секунд когда возьмут трубку",
+        "Сделай макияж монстра из подручных средств",
+        "Расскажи городскую легенду максимально пугающим голосом",
+        "Изобрази вампира который хочет есть",
+        "Напиши другу «Слышишь это?» без объяснений в 12 ночи",
+        "Сними видео как ты медленно идёшь в темноту",
+        "Изобрази смерть которая пришла за кем-то в комнате",
+        "Придумай и расскажи проклятие для кого-то из комнаты",
+        "Сделай страшное лицо и не меняй его 2 минуты",
+        "Расскажи что бы ты сделал если бы зомби-апокалипсис начался прямо сейчас",
+        "Изобрази ведьму читающую заклинание",
+      ],
+      en: [
+        "Pretend a spirit has possessed you — speak like a ghost for 2 minutes",
+        "Tell an original scary story",
+        "Turn off the lights and read a poem in a scary voice",
+        "Impersonate a zombie for 30 seconds",
+        "Call someone and stay silent for 10 seconds when they answer",
+        "Create monster makeup with whatever you have available",
+        "Tell an urban legend in the most terrifying voice you can",
+        "Imitate a hungry vampire",
+        "Text a friend 'Do you hear that?' with no explanation at midnight",
+        "Film yourself slowly walking into the dark",
+        "Imitate Death coming for someone in the room",
+        "Make up and tell a curse for someone in the room",
+        "Make a scary face and hold it for 2 minutes",
+        "Tell what you'd do if the zombie apocalypse started right now",
+        "Imitate a witch casting a spell",
+      ],
+    },
+  },
+};
+
+/* ============================================
+   APP STATE
+============================================ */
+let state = {
+  lang: 'ru',
+  isPremium: false,
+  myName: '',
+  myAvatar: '',
+  isHost: false,
+  roomCode: '',
+  maxPlayers: 5,
+  // "room" simulation — in production this is WebSocket state
+  room: null,
+};
+
+/* ============================================
+   ROOM SIMULATION (replaces WebSocket)
+   In production: replace with ws.send/onmessage
+============================================ */
+function genCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({length:4}, () => chars[Math.floor(Math.random()*chars.length)]).join('');
+}
+
+let GAME = {
+  players: [],
+  categories: ['friends','family'],
+  round: 1,
+  turn: 1,
+  currentIdx: 0,
+  currentType: null,
+  usedCards: {},
+  scores: {},
+};
+
+/* ============================================
+   SCREEN NAVIGATION
+============================================ */
+let _current = 's-home';
+
+function go(id, instant=false) {
+  const prev = document.getElementById(_current);
+  const next = document.getElementById(id);
+  if (!next) return;
+  if (_current !== id) {
+    prev?.classList.add('exit');
+    setTimeout(() => { prev?.classList.remove('active','exit'); }, 220);
+  }
+  next.classList.add('active');
+  _current = id;
+  next.scrollTop = 0;
+}
+
+/* ============================================
+   TOAST
+============================================ */
+let _toastTimer;
+function toast(msg, ms=2200) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), ms);
+}
+
+/* ============================================
+   MODAL
+============================================ */
+function openPremium() { document.getElementById('premiumModal').classList.add('open'); }
+function closePremium() { document.getElementById('premiumModal').classList.remove('open'); }
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+/* ============================================
+   CATEGORY GRIDS
+============================================ */
+function renderCatGrids() {
+  renderCatGrid('createCatGrid', roomCats, (id, sel) => {
+    if (sel) { if (!roomCats.includes(id)) roomCats.push(id); }
+    else { const i=roomCats.indexOf(id); if(i>-1&&roomCats.length>1) roomCats.splice(i,1); }
+    renderCatGrid('createCatGrid', roomCats, null);
+    if (document.getElementById('lobbyCatGrid').children.length)
+      renderCatGrid('lobbyCatGrid', GAME.categories, null);
+  });
+  renderCatGrid('lobbyCatGrid', GAME.categories, (id, sel) => {
+    if (sel) { if (!GAME.categories.includes(id)) GAME.categories.push(id); }
+    else { const i=GAME.categories.indexOf(id); if(i>-1&&GAME.categories.length>1) GAME.categories.splice(i,1); }
+    renderCatGrid('lobbyCatGrid', GAME.categories, null);
+  });
+  renderCatGrid('soloCatGrid', soloCats, (id, sel) => {
+    if (sel) { if (!soloCats.includes(id)) soloCats.push(id); }
+    else { const i=soloCats.indexOf(id); if(i>-1&&soloCats.length>1) soloCats.splice(i,1); }
+    renderCatGrid('soloCatGrid', soloCats, null);
+  });
+}
+
+function renderCatGrid(containerId, selected, onToggle) {
+  const grid = document.getElementById(containerId);
+  if (!grid) return;
+  grid.innerHTML = '';
+  CATEGORIES.forEach(cat => {
+    const isSel    = selected.includes(cat.id);
+    const isLocked = !cat.free && !state.isPremium;
+    const count    = lang === 'ru' ? cat.countRU : cat.countEN;
+    const name     = t('cat-' + cat.id);
+
+    const el = document.createElement('div');
+    el.className = `cat-card ${isSel ? 'sel' : ''} ${isLocked ? 'locked' : ''}`;
+    el.innerHTML = `
+      <span class="cat-emoji">${cat.emoji}</span>
+      <div class="cat-name">${name}</div>
+      <div class="cat-count">${count} ${lang==='ru'?'карточек':'cards'}</div>
+      <span class="cat-badge ${cat.free ? 'free' : 'pro'}">${cat.free ? 'FREE' : '⭐'}</span>
+    `;
+    el.onclick = () => {
+      if (isLocked) { openPremium(); return; }
+      if (onToggle) onToggle(cat.id, !isSel);
+      else {
+        // re-render
+        if (isSel && selected.length > 1) { selected.splice(selected.indexOf(cat.id),1); }
+        else if (!isSel) { selected.push(cat.id); }
+        renderCatGrid(containerId, selected, onToggle);
+      }
+    };
+    grid.appendChild(el);
+  });
+}
+
+/* ============================================
+   MAX PLAYERS SELECT
+============================================ */
+let _maxPlayers = 5;
+
+function setMax(n) {
+  if ((n > 5) && !state.isPremium) { openPremium(); return; }
+  _maxPlayers = n;
+  [3,5,8,10].forEach(v => {
+    const btn = document.getElementById('max'+v);
+    if (!btn) return;
+    btn.classList.toggle('btn-primary', v === n);
+    btn.classList.toggle('btn-ghost', v !== n);
+  });
+}
+
+/* ============================================
+   WEBSOCKET CLIENT
+============================================ */
+// In production set this to your deployed server URL
+// e.g. 'wss://tod-server.railway.app'
+// In demo mode (no server) we use local simulation
+const WS_URL = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL)
+  ? BACKEND_URL.replace(/^http/, 'ws')
+  : null;
+
+let _ws = null;
+let _wsReconnectTimer = null;
+let _myId = null;   // server-assigned player id
+
+function wsConnect(onOpen) {
+  if (!WS_URL) {
+    // No server — run in local demo mode
+    if (onOpen) onOpen();
+    return;
+  }
+  if (_ws && _ws.readyState === WebSocket.OPEN) {
+    if (onOpen) onOpen();
+    return;
+  }
+  _ws = new WebSocket(WS_URL);
+  _ws.onopen = () => {
+    console.log('[WS] Connected');
+    if (onOpen) onOpen();
+  };
+  _ws.onmessage = (e) => {
+    try { handleServerMsg(JSON.parse(e.data)); }
+    catch(err) { console.error('[WS] Parse error', err); }
+  };
+  _ws.onclose = () => {
+    console.log('[WS] Disconnected — reconnecting...');
+    _wsReconnectTimer = setTimeout(() => wsConnect(), 3000);
+  };
+  _ws.onerror = (e) => console.error('[WS] Error', e);
+}
+
+function wsSend(msg) {
+  if (_ws && _ws.readyState === WebSocket.OPEN) {
+    _ws.send(JSON.stringify(msg));
+    return true;
+  }
+  return false;
+}
+
+function handleServerMsg(msg) {
+  switch (msg.type) {
+
+    case 'room_created':
+    case 'room_joined':
+    case 'rejoined': {
+      _myId = msg.myId;
+      applyServerState(msg.state);
+      const isHost = msg.state.players[0]?.id === _myId ||
+                     msg.type === 'room_created';
+      state.isHost = isHost;
+      state.roomCode = msg.state.code;
+      document.getElementById('lobbyCode').textContent = msg.state.code;
+      document.getElementById('hostControls').style.display = isHost ? '' : 'none';
+      document.getElementById('guestWait').style.display = isHost ? 'none' : '';
+      renderLobbySlots();
+      updateLobbyStart();
+      go('s-lobby');
+      break;
+    }
+
+    case 'player_joined': {
+      applyServerState(msg.state);
+      toast(`👋 ${msg.player.name} ${lang==='ru'?'присоединился':'joined'}!`);
+      renderLobbySlots();
+      updateLobbyStart();
+      document.getElementById('lobbyCount').textContent =
+        ` ${msg.state.players.length}/${GAME.players.length || '?'}`;
+      break;
+    }
+
+    case 'player_left': {
+      applyServerState(msg.state);
+      toast(`👋 ${msg.name} ${lang==='ru'?'вышел':'left'}`);
+      renderLobbySlots();
+      updateLobbyStart();
+      break;
+    }
+
+    case 'player_offline':
+      toast(`📴 ${msg.name} ${lang==='ru'?'отключился':'disconnected'}`);
+      break;
+
+    case 'player_rejoined':
+      toast(`✅ ${msg.name} ${lang==='ru'?'вернулся':'reconnected'}!`);
+      break;
+
+    case 'settings_updated':
+      applyServerState(msg.state);
+      renderCatGrid('lobbyCatGrid', GAME.categories, null);
+      break;
+
+    case 'host_changed':
+      if (msg.newHostId === _myId) {
+        state.isHost = true;
+        document.getElementById('hostControls').style.display = '';
+        document.getElementById('guestWait').style.display = 'none';
+        toast(lang==='ru'?'👑 Ты теперь хост':'👑 You are now the host');
+      }
+      break;
+
+    case 'game_started':
+      applyServerState(msg.state);
+      initGameScreen();
+      break;
+
+    case 'turn_result':
+      applyServerState(msg.state);
+      initGameScreen();
+      break;
+
+    case 'type_picked':
+      // Guest sees the card type picked by current player
+      if (msg.playerId !== _myId) {
+        const p = GAME.players[GAME.currentIdx];
+        // show watch screen with card type
+        document.getElementById('watchAv').textContent   = p?.avatar || '😀';
+        document.getElementById('watchName').textContent = p?.name   || '?';
+        document.getElementById('watchCardArea').style.display = 'none';
+        go('s-watch');
+      }
+      break;
+
+    case 'reaction': {
+      const el = document.createElement('div');
+      el.style.cssText = `
+        position:fixed;bottom:80px;right:16px;z-index:300;
+        font-size:32px;animation:floatUp 1.5s ease forwards;
+        pointer-events:none;
+      `;
+      el.textContent = msg.emoji;
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 1600);
+      break;
+    }
+
+    case 'error': {
+      const errMap = {
+        ROOM_NOT_FOUND: lang==='ru'?'❌ Комната не найдена':'❌ Room not found',
+        GAME_STARTED:   lang==='ru'?'❌ Игра уже началась':'❌ Game already started',
+        ROOM_FULL:      lang==='ru'?'❌ Комната заполнена':'❌ Room is full',
+        NEED_MORE_PLAYERS: lang==='ru'?'❌ Нужно минимум 2 игрока':'❌ Need at least 2 players',
+      };
+      toast(errMap[msg.code] || `❌ ${msg.code}`);
+      break;
+    }
+
+    case 'room_expired':
+      toast(lang==='ru'?'⏰ Комната закрыта':'⏰ Room expired');
+      go('s-home');
+      break;
+
+    case 'pong': break;
+  }
+}
+
+function applyServerState(serverState) {
+  if (!serverState) return;
+  GAME.players    = serverState.players.map(p => ({
+    ...p, ws: null, // ws is server-side only
+  }));
+  GAME.categories  = serverState.categories || GAME.categories;
+  GAME.round       = serverState.round       || 1;
+  GAME.turn        = serverState.turn        || 1;
+  GAME.currentIdx  = serverState.currentIdx  || 0;
+  _gameMode        = serverState.gameMode    || _gameMode;
+  _penalty         = serverState.penalty     ?? _penalty;
+  GAME.scores      = {};
+  GAME.players.forEach(p => { GAME.scores[p.name] = p.score; });
+}
+
+/* ============================================
+   CREATE ROOM
+============================================ */
+function createRoom() {
+  const name = document.getElementById('hostName').value.trim();
+  if (!name) { toast(t('toast-enter-name')); return; }
+
+  state.myName   = name;
+  state.myAvatar = AVATARS[Math.floor(Math.random() * AVATARS.length)];
+  state.isHost   = true;
+
+  if (WS_URL) {
+    // Real server mode
+    wsConnect(() => {
+      wsSend({
+        type:       'create_room',
+        name,
+        avatar:     state.myAvatar,
+        categories: roomCats,
+        maxPlayers: _maxPlayers,
+        gameMode:   _gameMode,
+        penalty:    _penalty,
+      });
+    });
+  } else {
+    // Local demo mode (no server)
+    state.roomCode = genCode();
+    GAME.players   = [{ id:'host', name, avatar: state.myAvatar, score: 0 }];
+    GAME.categories = [...roomCats];
+    GAME.scores    = { [name]: 0 };
+    document.getElementById('lobbyCode').textContent = state.roomCode;
+    document.getElementById('lobbyCount').textContent = ` 1/${_maxPlayers}`;
+    document.getElementById('hostControls').style.display = '';
+    document.getElementById('guestWait').style.display = 'none';
+    renderCatGrid('lobbyCatGrid', GAME.categories, (id, sel) => {
+      if (sel) { if (!GAME.categories.includes(id)) GAME.categories.push(id); }
+      else { const i=GAME.categories.indexOf(id); if(i>-1&&GAME.categories.length>1) GAME.categories.splice(i,1); }
+      renderCatGrid('lobbyCatGrid', GAME.categories, null);
+    });
+    renderLobbySlots();
+    updateLobbyStart();
+    go('s-lobby');
+    // Demo: simulate guests
+    setTimeout(() => simulateGuestJoin(lang==='ru'?'Алекс':'Alex'), 2000);
+    setTimeout(() => simulateGuestJoin(lang==='ru'?'Маша':'Mary'), 4500);
+  }
+}
+
+function simulateGuestJoin(name) {
+  if (GAME.players.length >= _maxPlayers) return;
+  const avatar = AVATARS[GAME.players.length % AVATARS.length];
+  GAME.players.push({ id: name, name, avatar, score: 0 });
+  GAME.scores[name] = 0;
+  document.getElementById('lobbyCount').textContent = ` ${GAME.players.length}/${_maxPlayers}`;
+  renderLobbySlots();
+  updateLobbyStart();
+  toast(`👋 ${name} ${lang==='ru'?'присоединился':'joined'}!`);
+}
+
+function renderLobbySlots() {
+  const wrap = document.getElementById('lobbySlots');
+  wrap.innerHTML = '';
+  const total = Math.max(_maxPlayers, GAME.players.length);
+  for (let i = 0; i < Math.min(total, 8); i++) {
+    const p = GAME.players[i];
+    const el = document.createElement('div');
+    el.className = `slot ${p ? 'filled' : ''}`;
+    el.innerHTML = p
+      ? `<span class="slot-avatar">${p.avatar}</span><div class="slot-name">${p.name}</div>`
+      : `<div class="slot-empty">+</div><div class="slot-name" style="color:var(--text3);font-size:11px">${lang==='ru'?'Ожидание':'Waiting'}</div>`;
+    wrap.appendChild(el);
+  }
+}
+
+function updateLobbyStart() {
+  const btn = document.getElementById('lobbyStartBtn');
+  const ok  = GAME.players.length >= 2;
+  btn.disabled = !ok;
+  btn.style.opacity = ok ? '1' : '0.5';
+}
+
+/* ============================================
+   JOIN ROOM
+============================================ */
+function joinRoom() {
+  const name = document.getElementById('guestName').value.trim();
+  const code = document.getElementById('joinCode').value.trim().toUpperCase();
+  if (!name) { toast(t('toast-enter-name')); return; }
+  if (code.length < 4) { toast(t('toast-enter-code')); return; }
+
+  state.myName   = name;
+  state.myAvatar = AVATARS[Math.floor(Math.random() * AVATARS.length)];
+  state.isHost   = false;
+  state.roomCode = code;
+
+  if (WS_URL) {
+    wsConnect(() => {
+      wsSend({ type: 'join_room', code, name, avatar: state.myAvatar });
+    });
+  } else {
+    // Demo mode
+    if (GAME.players.length === 0) {
+      GAME.players = [{ id:'host', name:'Хост', avatar:'😎', score:0 }];
+    }
+    GAME.players.push({ id: name, name, avatar: state.myAvatar, score: 0 });
+    GAME.scores[name] = 0;
+    document.getElementById('lobbyCode').textContent = code;
+    document.getElementById('lobbyCount').textContent = ` ${GAME.players.length}/?`;
+    document.getElementById('hostControls').style.display = 'none';
+    document.getElementById('guestWait').style.display = '';
+    renderLobbySlots();
+    go('s-lobby');
+  }
+}
+
+function leaveLobby() {
+  wsSend({ type: 'leave_room' });
+  _ws?.close();
+  _ws = null;
+  GAME.players = [];
+  go('s-home');
+}
+
+function shareInvite() {
+  const code = state.roomCode || document.getElementById('lobbyCode').textContent;
+  const appUrl = (typeof WEBAPP_URL !== 'undefined' && WEBAPP_URL) || window.location.href;
+  const msg  = lang === 'ru'
+    ? `🔥 Правда или Действие! Код: ${code}\n${appUrl}`
+    : `🔥 Truth or Dare! Code: ${code}\n${appUrl}`;
+  const tg = window.Telegram?.WebApp;
+  if (tg?.openTelegramLink) {
+    tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(appUrl)}&text=${encodeURIComponent(`Код: ${code}`)}`);
+  } else if (navigator.clipboard) {
+    navigator.clipboard.writeText(msg).then(() => toast(t('toast-copied')));
+  } else {
+    toast(code);
+  }
+}
+
+/* ============================================
+   START GAME (HOST)
+============================================ *//* ============================================
+   START GAME (HOST)
+============================================ */
+/* ============================================
+   PENALTY SETUP
+============================================ */
+const PENALTY_PRESETS = {
+  ru: [
+    { emoji:'💪', label:'10 отжиманий' },
+    { emoji:'🥃', label:'Выпить рюмку' },
+    { emoji:'🕺', label:'Потанцевать 30 сек' },
+    { emoji:'📸', label:'Стыдное фото в статус' },
+    { emoji:'🎤', label:'Спеть куплет' },
+    { emoji:'🌶️', label:'Острое блюдо' },
+    { emoji:'💸', label:'Дать 100 рублей в банк' },
+    { emoji:'🤸', label:'30 приседаний' },
+    { emoji:'📞', label:'Позвонить маме' },
+    { emoji:'😂', label:'Рассказать анекдот' },
+  ],
+  en: [
+    { emoji:'💪', label:'10 push-ups' },
+    { emoji:'🥃', label:'Take a shot' },
+    { emoji:'🕺', label:'Dance for 30 sec' },
+    { emoji:'📸', label:'Embarrassing photo as avatar' },
+    { emoji:'🎤', label:'Sing a verse' },
+    { emoji:'🌶️', label:'Eat something spicy' },
+    { emoji:'💸', label:'Put $1 in the pot' },
+    { emoji:'🤸', label:'30 squats' },
+    { emoji:'📞', label:'Call mom' },
+    { emoji:'😂', label:'Tell a joke' },
+  ],
+};
+
+let _penalty = null;      // null = not chosen, '' = no penalty, string = penalty text
+let _noPenalty = false;
+
+function goToPenaltySetup() {
+  _penalty   = null;
+  _noPenalty = false;
+  renderPenaltyScreen();
+  go('s-penalty');
+}
+
+function renderPenaltyScreen() {
+  const presets = PENALTY_PRESETS[lang] || PENALTY_PRESETS.ru;
+  const chips   = document.getElementById('penaltyChips');
+  chips.innerHTML = '';
+  presets.forEach(p => {
+    const btn = document.createElement('button');
+    btn.style.cssText = `
+      display:inline-flex;align-items:center;gap:6px;
+      padding:9px 14px;border-radius:40px;
+      background:var(--surface2);border:1.5px solid var(--border2);
+      color:var(--text);font-family:var(--font-body);font-size:13px;font-weight:700;
+      cursor:pointer;transition:all 0.15s;white-space:nowrap;
+    `;
+    btn.innerHTML = `${p.emoji} ${p.label}`;
+    btn.dataset.val = p.label;
+    btn.onclick = () => selectPreset(p.label, btn);
+    chips.appendChild(btn);
+  });
+
+  // reset UI
+  updateNoPenaltyToggle();
+  updatePenaltyPreview();
+  document.getElementById('penaltyInput').value = '';
+}
+
+function selectPreset(label, btnEl) {
+  _noPenalty = false;
+  _penalty   = label;
+  // highlight chip
+  document.querySelectorAll('#penaltyChips button').forEach(b => {
+    b.style.background    = 'var(--surface2)';
+    b.style.borderColor   = 'var(--border2)';
+    b.style.color         = 'var(--text)';
+  });
+  btnEl.style.background  = 'rgba(79,142,247,0.2)';
+  btnEl.style.borderColor = 'var(--truth)';
+  btnEl.style.color       = '#fff';
+  document.getElementById('penaltyInput').value = '';
+  updateNoPenaltyToggle();
+  updatePenaltyPreview();
+}
+
+function setPenaltyCustom() {
+  const val = document.getElementById('penaltyInput').value.trim();
+  if (!val) return;
+  _penalty   = val;
+  _noPenalty = false;
+  // clear chip highlights
+  document.querySelectorAll('#penaltyChips button').forEach(b => {
+    b.style.background  = 'var(--surface2)';
+    b.style.borderColor = 'var(--border2)';
+    b.style.color       = 'var(--text)';
+  });
+  updateNoPenaltyToggle();
+  updatePenaltyPreview();
+  toast(t('toast-penalty-set'));
+}
+
+function toggleNoPenalty() {
+  _noPenalty = !_noPenalty;
+  if (_noPenalty) {
+    _penalty = '';
+    document.getElementById('penaltyInput').value = '';
+    document.querySelectorAll('#penaltyChips button').forEach(b => {
+      b.style.background  = 'var(--surface2)';
+      b.style.borderColor = 'var(--border2)';
+      b.style.color       = 'var(--text)';
+    });
+  }
+  updateNoPenaltyToggle();
+  updatePenaltyPreview();
+}
+
+function updateNoPenaltyToggle() {
+  const wrap  = document.getElementById('noPenaltyToggle');
+  const check = document.getElementById('noPenaltyCheck');
+  if (_noPenalty) {
+    wrap.style.borderColor  = 'var(--green)';
+    wrap.style.background   = 'rgba(34,197,94,0.08)';
+    check.textContent        = '✓';
+    check.style.background  = 'var(--green)';
+    check.style.borderColor = 'var(--green)';
+    check.style.color       = 'white';
+  } else {
+    wrap.style.borderColor  = 'var(--border)';
+    wrap.style.background   = 'var(--surface2)';
+    check.textContent        = '';
+    check.style.background  = 'transparent';
+    check.style.borderColor = 'var(--border2)';
+  }
+}
+
+function updatePenaltyPreview() {
+  const box  = document.getElementById('penaltyPreview');
+  const text = document.getElementById('penaltyPreviewText');
+  if (_penalty === null) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  if (_penalty === '') {
+    text.textContent = '🤝 ' + t('no-penalty-title');
+    text.style.color = 'var(--green)';
+    box.style.borderColor = 'rgba(34,197,94,0.3)';
+    box.style.background  = 'rgba(34,197,94,0.07)';
+  } else {
+    text.textContent = '⚖️ ' + _penalty;
+    text.style.color = 'var(--truth)';
+    box.style.borderColor = 'rgba(79,142,247,0.25)';
+    box.style.background  = 'linear-gradient(135deg,rgba(79,142,247,0.1),rgba(124,107,247,0.08))';
+  }
+}
+
+function getPenaltyBanner() {
+  if (_penalty === null || _penalty === '') return '';
+  return _penalty;
+}
+
+function hostStartGame() {
+  if (GAME.players.length < 2) { toast(t('toast-need-2')); return; }
+
+  if (WS_URL) {
+    // Real server — host sends start_game
+    wsSend({
+      type:      'start_game',
+      gameMode:  _gameMode,
+      penalty:   _penalty,
+      categories: GAME.categories,
+    });
+  } else {
+    // Local demo mode
+    GAME.round = 1; GAME.turn = 1; GAME.currentIdx = 0; GAME.usedCards = {};
+    _turnTruthUsed = 0; _turnDareUsed = 0;
+    GAME.players.forEach(p => { p.score = 0; GAME.scores[p.name] = 0; });
+    initGameScreen();
+  }
+}
+
+/* ============================================
+   GAME MODE SETUP
+============================================ */
+const GAME_MODES = [
+  { id:'turns', emoji:'🔄', titleKey:'mode-turns-title', descKey:'mode-turns-desc', color:'var(--truth)' },
+  { id:'2t1d',  emoji:'⚖️', titleKey:'mode-2t1d-title',  descKey:'mode-2t1d-desc',  color:'#34d399' },
+  { id:'auto',  emoji:'🎲', titleKey:'mode-auto-title',  descKey:'mode-auto-desc',  color:'#f97316' },
+];
+
+let _gameMode = 'turns';
+let _turnTruthUsed = 0;
+let _turnDareUsed  = 0;
+
+function goToGameMode() {
+  renderGameModeScreen();
+  go('s-gamemode');
+}
+
+function renderGameModeScreen() {
+  const list = document.getElementById('gameModeList');
+  list.innerHTML = '';
+  GAME_MODES.forEach(mode => {
+    const isSel = _gameMode === mode.id;
+    const el = document.createElement('div');
+    el.style.cssText = `
+      display:flex;align-items:center;gap:14px;
+      background:${isSel ? 'rgba(79,142,247,0.1)' : 'var(--surface2)'};
+      border:2px solid ${isSel ? mode.color : 'var(--border)'};
+      border-radius:var(--radius);padding:16px;cursor:pointer;transition:all 0.2s;
+    `;
+    el.innerHTML = `
+      <div style="width:48px;height:48px;border-radius:14px;background:${isSel ? mode.color : 'var(--surface)'};
+        display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;transition:background 0.2s">${mode.emoji}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-family:var(--font-display);font-size:14px;font-weight:800;margin-bottom:3px">${t(mode.titleKey)}</div>
+        <div style="font-size:12px;color:var(--text2);line-height:1.4">${t(mode.descKey)}</div>
+      </div>
+      <div style="width:22px;height:22px;border-radius:50%;flex-shrink:0;
+        border:2px solid ${isSel ? mode.color : 'var(--border2)'};
+        background:${isSel ? mode.color : 'transparent'};
+        display:flex;align-items:center;justify-content:center;font-size:12px;color:white">${isSel ? '✓' : ''}</div>
+    `;
+    el.onclick = () => { _gameMode = mode.id; renderGameModeScreen(); };
+    list.appendChild(el);
+  });
+}
+
+/* ============================================
+   TURN ENGINE (replaces wheel)
+============================================ */
+function initGameScreen() {
+  GAME.currentIdx = GAME.currentIdx % GAME.players.length;
+  renderTurnScreen();
+  go('s-wheel');
+}
+
+function renderTurnScreen() {
+  const p    = GAME.players[GAME.currentIdx];
+  const next = GAME.players[(GAME.currentIdx + 1) % GAME.players.length];
+
+  document.getElementById('turnHdrTitle').textContent = '🎮 ' + (lang==='ru'?'Игра':'Game');
+  document.getElementById('turnPlayerAvatar').textContent = p.avatar;
+  document.getElementById('turnPlayerName').textContent   = p.name;
+  document.getElementById('rb-round').textContent   = GAME.round;
+  document.getElementById('rb-turn').textContent    = GAME.turn;
+  document.getElementById('rb-players').textContent = GAME.players.length;
+
+  const nextHint = document.getElementById('nextPlayerHint');
+  nextHint.textContent = GAME.players.length > 1
+    ? t('next-player-lbl') + ' ' + next.avatar + ' ' + next.name : '';
+
+  renderPenaltyBanner();
+
+  const area = document.getElementById('turnActionArea');
+  area.innerHTML = '';
+
+  if (_gameMode === 'turns') {
+    area.innerHTML = `
+      <div class="choice-grid" style="margin-bottom:10px">
+        <button class="choice-btn truth" onclick="pickType('truth')">
+          <span class="choice-emoji">🧠</span><span>${t('truth')}</span>
+        </button>
+        <button class="choice-btn dare" onclick="pickType('dare')">
+          <span class="choice-emoji">🎯</span><span>${t('dare')}</span>
+        </button>
+      </div>
+      <button class="btn btn-outline" style="font-size:13px" onclick="skipTurn()">
+        ⏭ ${t('skip-turn')}
+      </button>`;
+  } else if (_gameMode === '2t1d') {
+    // Truth is blocked if player took 2+ truths with zero dares this turn
+    const truthBlocked = _turnTruthUsed >= 2 && _turnDareUsed === 0;
+    const warningMsg = truthBlocked
+      ? (lang==='ru' ? '🔒 Правда заблокирована — сначала сделай Действие!' : '🔒 Truth locked — do a Dare first!')
+      : (_turnTruthUsed >= 2
+          ? (lang==='ru' ? '✅ Можешь взять ещё правду или завершить ход' : '✅ You can take more truths or end turn')
+          : '');
+    const statusMsg = _turnTruthUsed === 0 && _turnDareUsed === 0
+      ? (lang==='ru' ? 'Выбирай свободно — или правда, или действие' : 'Choose freely — truth or dare')
+      : (lang==='ru'
+          ? `Правд: ${_turnTruthUsed} · Действий: ${_turnDareUsed}`
+          : `Truths: ${_turnTruthUsed} · Dares: ${_turnDareUsed}`);
+    area.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <div style="flex:1;text-align:center;padding:10px 8px;
+          background:${truthBlocked?'rgba(247,79,107,0.08)':'rgba(79,142,247,0.1)'};
+          border-radius:12px;border:1.5px solid ${truthBlocked?'rgba(247,79,107,0.3)':'rgba(79,142,247,0.25)'}">
+          <div style="font-size:18px;margin-bottom:2px">🧠</div>
+          <div style="font-family:var(--font-display);font-size:20px;font-weight:800;
+            color:${truthBlocked?'var(--dare)':'var(--truth)'}">${_turnTruthUsed}</div>
+          <div style="font-size:10px;color:var(--text2)">${lang==='ru'?'правд взято':'truths taken'}</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:10px 8px;
+          background:rgba(247,79,107,0.1);
+          border-radius:12px;border:1.5px solid rgba(247,79,107,0.25)">
+          <div style="font-size:18px;margin-bottom:2px">🎯</div>
+          <div style="font-family:var(--font-display);font-size:20px;font-weight:800;color:var(--dare)">${_turnDareUsed}</div>
+          <div style="font-size:10px;color:var(--text2)">${lang==='ru'?'действий взято':'dares taken'}</div>
+        </div>
+      </div>
+      ${warningMsg ? `<div style="text-align:center;font-size:13px;font-weight:700;color:${truthBlocked?'var(--dare)':'var(--green)'};margin-bottom:10px;padding:8px;background:${truthBlocked?'rgba(247,79,107,0.08)':'rgba(34,197,94,0.08)'};border-radius:10px">${warningMsg}</div>` : ''}
+      <div class="btn-row" style="margin-bottom:10px">
+        <button class="btn btn-truth-big" onclick="pickType('truth')" ${truthBlocked ? 'disabled style="opacity:0.3;cursor:not-allowed"' : ''}>
+          🧠 ${t('truth')}
+        </button>
+        <button class="btn btn-dare-big" onclick="pickType('dare')">
+          🎯 ${t('dare')}
+        </button>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" style="font-size:12px;flex:1" onclick="skipTurn()">⏭ ${t('skip-turn')}</button>
+        <button class="btn btn-ghost" style="font-size:12px;flex:1" onclick="advanceTurn()">
+          ➡️ ${lang==='ru'?'Передать ход':'End my turn'}
+        </button>
+      </div>`;
+  } else if (_gameMode === 'auto') {
+    area.innerHTML = `
+      <button class="btn btn-primary" style="padding:22px;font-size:18px;border-radius:var(--radius-lg)" onclick="autoPickCard()">
+        🎲 ${t('btn-take-card')}
+      </button>
+      <div style="margin-top:10px;text-align:center;font-size:12px;color:var(--text3)">
+        ${lang==='ru'?'Правда или Действие — выберется случайно':'Truth or Dare — chosen randomly'}
+      </div>`;
+  }
+}
+
+function renderPenaltyBanner() {
+  const wrap = document.getElementById('penaltyBannerWrap');
+  if (!wrap) return;
+  if (!_penalty) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;
+      background:var(--surface2);border:1px solid var(--border2);
+      border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:10px;font-size:13px">
+      <span style="font-size:18px">⚖️</span>
+      <div>
+        <div style="font-size:10px;color:var(--text2);font-family:var(--font-display);letter-spacing:.1em;text-transform:uppercase">${t('penalty-active')}</div>
+        <div style="font-weight:700">${_penalty}</div>
+      </div>
+    </div>`;
+}
+
+function autoPickCard() {
+  pickType(Math.random() > 0.5 ? 'truth' : 'dare');
+}
+
+function pickType(type) {
+  if (_gameMode === '2t1d') {
+    // Block truth if taken 2+ times with no dare yet
+    if (type === 'truth' && _turnTruthUsed >= 2 && _turnDareUsed === 0) return;
+    if (type === 'truth') _turnTruthUsed++;
+    else _turnDareUsed++;
+  }
+  GAME.currentType = type;
+  showCardScreen(GAME.players[GAME.currentIdx], type);
+}
+
+function skipTurn() {
+  const p = GAME.players[GAME.currentIdx];
+  p.score -= 1; GAME.scores[p.name] = p.score;
+  toast(t('toast-skip'));
+  if (WS_URL) { wsSend({ type: 'task_result', result: 'skip' }); }
+  else { advanceTurn(); }
+}
+
+function penaltyDone() {
+  document.getElementById('penaltyModal')?.classList.remove('open');
+  toast('💪 ' + (lang==='ru'?'Наказание принято!':'Penalty completed!'));
+  if (WS_URL) { wsSend({ type: 'task_result', result: 'refuse' }); }
+  else { _afterAction(); }
+}
+
+function showCardScreen(p, type) {
+  GAME.currentType = type;
+  const card = drawCard(type, GAME.categories);
+  document.getElementById('cardHdrTitle').textContent   = type === 'truth' ? '🧠 ' + t('truth') : '🎯 ' + t('dare');
+  document.getElementById('cardAv').textContent         = p.avatar;
+  document.getElementById('cardPlayerName').textContent = p.name;
+  const el = document.getElementById('mainCard');
+  el.className = `game-card ${type}-card`;
+  document.getElementById('mainCardType').textContent = type === 'truth' ? t('truth').toUpperCase() : t('dare').toUpperCase();
+  document.getElementById('mainCardText').textContent = card;
+  go('s-card');
+}
+
+function drawCard(type, cats) {
+  const pool = [];
+  cats.forEach(cat => {
+    const bucket = CARDS[type]?.[cat]?.[lang];
+    if (bucket) pool.push(...bucket);
+  });
+  if (!pool.length) return CARDS[type]?.friends?.[lang]?.[0] || '...';
+  const used  = GAME.usedCards[type] || [];
+  let avail   = pool.filter((_,i) => !used.includes(i));
+  if (!avail.length) { GAME.usedCards[type] = []; avail = pool; }
+  const idx  = Math.floor(Math.random() * avail.length);
+  const card = avail[idx];
+  if (!GAME.usedCards[type]) GAME.usedCards[type] = [];
+  GAME.usedCards[type].push(pool.indexOf(card));
+  return card;
+}
+
+function rerollCard() {
+  const card = drawCard(GAME.currentType, GAME.categories);
+  const el   = document.getElementById('mainCardText');
+  el.style.opacity = '0'; el.style.transform = 'translateY(6px)';
+  setTimeout(() => {
+    el.textContent = card;
+    el.style.opacity = '1'; el.style.transform = 'none';
+    el.style.transition = 'opacity 0.2s,transform 0.2s';
+  }, 150);
+}
+
+function completeTask() {
+  haptic('success');
+  const p = GAME.players[GAME.currentIdx];
+  p.score += 2; GAME.scores[p.name] = p.score;
+  toast(t('toast-complete'));
+  if (WS_URL) { wsSend({ type: 'task_result', result: 'complete' }); }
+  else { _afterAction(); }
+}
+
+function refuseTask() {
+  haptic('error');
+  const p = GAME.players[GAME.currentIdx];
+  p.score -= 1; GAME.scores[p.name] = p.score;
+  if (_penalty) {
+    showPenaltyModal(p);
+  } else {
+    toast(t('toast-refuse'));
+    if (WS_URL) { wsSend({ type: 'task_result', result: 'refuse' }); }
+    else { _afterAction(); }
+  }
+}
+
+function _afterAction() {
+  if (_gameMode === '2t1d') {
+    // Always return to turn screen so player can take more cards or pass
+    renderTurnScreen(); go('s-wheel');
+  } else {
+    advanceTurn();
+  }
+}
+
+function showPenaltyModal(player) {
+  let el = document.getElementById('penaltyModal');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'penaltyModal';
+    el.className = 'modal-bg';
+    el.innerHTML = `
+      <div class="modal-sheet" onclick="event.stopPropagation()">
+        <div class="modal-handle"></div>
+        <div style="text-align:center;padding:8px 0 20px">
+          <div style="font-size:52px;margin-bottom:12px">⚖️</div>
+          <div style="font-family:var(--font-display);font-size:13px;color:var(--dare);letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px">Наказание</div>
+          <div id="penaltyModalPlayer" style="font-size:14px;color:var(--text2);margin-bottom:16px"></div>
+          <div id="penaltyModalText" style="font-family:var(--font-display);font-size:22px;font-weight:800;
+            background:linear-gradient(135deg,var(--dare),#f7826e);
+            -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+            line-height:1.3;padding:0 12px"></div>
+        </div>
+        <button class="btn btn-danger" onclick="penaltyDone()">
+          💪 ${lang==='ru'?'Выполнено!':'Done!'}
+        </button>
+        <div class="spacer-8"></div>
+      </div>`;
+    document.body.appendChild(el);
+  }
+  document.getElementById('penaltyModalPlayer').textContent = player.avatar + ' ' + player.name;
+  document.getElementById('penaltyModalText').textContent   = _penalty;
+  el.classList.add('open');
+}
+
+
+/* ============================================
+   HAPTIC FEEDBACK
+============================================ */
+function haptic(type = 'light') {
+  try {
+    const tg = window.Telegram?.WebApp;
+    if (tg?.HapticFeedback) {
+      if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
+      else if (type === 'error') tg.HapticFeedback.notificationOccurred('error');
+      else if (type === 'warning') tg.HapticFeedback.notificationOccurred('warning');
+      else tg.HapticFeedback.impactOccurred(type); // light/medium/heavy/rigid/soft
+    } else if (navigator.vibrate) {
+      const patterns = { light:30, medium:60, heavy:100, success:[30,30,60], error:[100,30,100] };
+      navigator.vibrate(patterns[type] || 30);
+    }
+  } catch(e) {}
+}
+
+function advanceTurn() {
+  haptic('light');
+  _turnTruthUsed = 0;
+  _turnDareUsed  = 0;
+  GAME.turn++;
+  if (GAME.turn > GAME.players.length) { GAME.turn = 1; GAME.round++; }
+  GAME.currentIdx = (GAME.currentIdx + 1) % GAME.players.length;
+  initGameScreen();
+}
+
+/* ============================================
+   SCORES
+============================================ */
+function showScores() {
+  renderScores();
+  go('s-scores');
+}
+
+function renderScores() {
+  const sorted = [...GAME.players].sort((a,b) => b.score - a.score);
+  const list   = document.getElementById('scoresList');
+  list.innerHTML = '';
+  sorted.forEach((p,i) => {
+    const rankEmoji = i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}.`;
+    const rankClass = i===0?'gold':i===1?'silver':i===2?'bronze':'';
+    const el = document.createElement('div');
+    el.className = 'score-row';
+    el.style.animationDelay = (i*0.05)+'s';
+    el.innerHTML = `
+      <div class="score-rank ${rankClass}">${rankEmoji}</div>
+      <div class="p-avatar" style="width:36px;height:36px;font-size:18px">${p.avatar}</div>
+      <div class="p-name">${p.name}</div>
+      <div class="score-pts">★ ${p.score}</div>
+    `;
+    list.appendChild(el);
+  });
+}
+
+function endGameFinal() {
+  haptic('heavy');
+  const sorted = [...GAME.players].sort((a,b) => b.score-a.score);
+  const winner = sorted[0];
+  showWinnerScreen(winner, sorted);
+}
+
+function showWinnerScreen(winner, sorted) {
+  // Build winner modal
+  let el = document.getElementById('winnerModal');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'winnerModal';
+    el.className = 'modal-bg';
+    document.body.appendChild(el);
+  }
+
+  const podium = sorted.slice(0, 3).map((p, i) => {
+    const medals = ['🥇','🥈','🥉'];
+    return `<div style="text-align:center;flex:1">
+      <div style="font-size:${i===0?'44px':'32px'};margin-bottom:4px">${p.avatar}</div>
+      <div style="font-size:${i===0?'22px':'16px'}">${medals[i]}</div>
+      <div style="font-family:var(--font-display);font-size:${i===0?'14px':'12px'};font-weight:700;margin-top:4px;word-break:break-word">${p.name}</div>
+      <div style="font-size:11px;color:var(--gold);font-weight:700">★ ${p.score}</div>
+    </div>`;
+  }).join('');
+
+  const allScores = sorted.map((p, i) => {
+    const medals = ['🥇','🥈','🥉'];
+    const medal = i < 3 ? medals[i] : `${i+1}.`;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="width:28px;text-align:center;font-size:14px">${medal}</div>
+      <div style="font-size:22px">${p.avatar}</div>
+      <div style="font-weight:700;flex:1">${p.name}</div>
+      <div style="font-family:var(--font-display);font-size:14px;color:var(--gold)">★ ${p.score}</div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="modal-sheet" onclick="event.stopPropagation()" style="max-height:90vh;overflow-y:auto">
+      <div class="modal-handle"></div>
+
+      <!-- Confetti area -->
+      <div id="confettiArea" style="position:relative;overflow:hidden;border-radius:20px;
+        background:linear-gradient(135deg,rgba(245,183,49,0.15),rgba(79,142,247,0.1));
+        padding:24px 16px;text-align:center;margin-bottom:20px">
+        <div style="font-size:13px;font-family:var(--font-display);color:var(--gold);letter-spacing:.15em;text-transform:uppercase;margin-bottom:8px">
+          ${lang==='ru'?'🏆 Победитель':'🏆 Winner'}
+        </div>
+        <div style="font-size:64px;margin-bottom:8px;animation:pulse 1s ease-in-out 3">${winner.avatar}</div>
+        <div style="font-family:var(--font-display);font-size:26px;font-weight:900;margin-bottom:4px">${winner.name}</div>
+        <div style="font-size:18px;color:var(--gold);font-weight:700">★ ${winner.score} ${lang==='ru'?'очков':'points'}</div>
+      </div>
+
+      <!-- Podium -->
+      ${sorted.length > 1 ? `
+      <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:20px;
+        background:var(--surface2);border-radius:var(--radius);padding:16px">
+        ${sorted.length > 1 ? sorted.slice(0,Math.min(3,sorted.length)).map((p,i) => {
+          const medals=['🥇','🥈','🥉'];
+          return `<div style="text-align:center;flex:1">
+            <div style="font-size:${i===0?'42px':'28px'}">${p.avatar}</div>
+            <div style="font-size:${i===0?'20px':'16px'};margin:2px 0">${medals[i]}</div>
+            <div style="font-family:var(--font-display);font-size:11px;font-weight:700">${p.name.length>8?p.name.slice(0,7)+'…':p.name}</div>
+            <div style="font-size:11px;color:var(--gold)">★${p.score}</div>
+          </div>`;
+        }).join('') : ''}
+      </div>` : ''}
+
+      <!-- Full scoreboard -->
+      <div style="margin-bottom:20px">${allScores}</div>
+
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-ghost" style="flex:1" onclick="playAgain()">
+          🔄 ${lang==='ru'?'Ещё раз':'Play again'}
+        </button>
+        <button class="btn btn-primary" style="flex:1" onclick="closeWinner()">
+          🏠 ${lang==='ru'?'В меню':'Home'}
+        </button>
+      </div>
+    </div>
+  `;
+
+  el.classList.add('open');
+
+  // Animate confetti
+  spawnConfetti(document.getElementById('confettiArea'));
+}
+
+function spawnConfetti(container) {
+  if (!container) return;
+  const colors = ['#f5b731','#4f8ef7','#f74f6b','#34d399','#a78bfa','#f97316'];
+  for (let i = 0; i < 30; i++) {
+    setTimeout(() => {
+      const dot = document.createElement('div');
+      const size = 6 + Math.random() * 8;
+      dot.style.cssText = `
+        position:absolute;width:${size}px;height:${size}px;
+        border-radius:${Math.random()>0.5?'50%':'3px'};
+        background:${colors[Math.floor(Math.random()*colors.length)]};
+        left:${Math.random()*100}%;top:-10px;
+        animation:confettiFall ${1.5+Math.random()}s ease-in forwards;
+        transform:rotate(${Math.random()*360}deg);
+        pointer-events:none;
+      `;
+      container.appendChild(dot);
+      setTimeout(() => dot.remove(), 2500);
+    }, i * 60);
+  }
+}
+
+function playAgain() {
+  document.getElementById('winnerModal')?.classList.remove('open');
+  // Reset game state, go back to lobby setup
+  GAME.players.forEach(p => { p.score = 0; GAME.scores[p.name] = 0; });
+  GAME.round = 1; GAME.turn = 1; GAME.currentIdx = 0; GAME.usedCards = {};
+  _turnTruthUsed = 0; _turnDareUsed = 0;
+  initGameScreen();
+}
+
+function closeWinner() {
+  document.getElementById('winnerModal')?.classList.remove('open');
+  GAME.players = [];
+  go('s-home');
+}
+
+/* ============================================
+   QUICK DEMO
+============================================ */
+function quickDemo() {
+  const demoNames = lang === 'ru' ? ['Алекс', 'Маша', 'Дима'] : ['Alex', 'Mary', 'Dan'];
+  GAME.players = demoNames.map((name, i) => ({ name, avatar: AVATARS[i], score: 0 }));
+  GAME.categories = ['friends', 'family'];
+  GAME.scores = {};
+  GAME.players.forEach(p => { GAME.scores[p.name] = 0; });
+  GAME.round = 1; GAME.turn = 1; GAME.currentIdx = 0; GAME.usedCards = {};
+  state.myName = demoNames[0]; state.isHost = true;
+  _penalty = null; _noPenalty = false; _gameMode = 'turns';
+  _turnTruthUsed = 0; _turnDareUsed = 0;
+  renderPenaltyScreen();
+  go('s-penalty');
+}
+
+/* ============================================
+   SOLO MODE
+============================================ */
+let _soloType = 'truth';
+function soloCard(type) {
+  _soloType = type;
+  const card = drawCard(type, soloCats);
+  const stage = document.getElementById('soloCardStage');
+  const btns  = document.getElementById('soloCardBtns');
+  const el    = document.getElementById('soloCard');
+  stage.style.display = 'block';
+  btns.style.display  = 'block';
+  el.className = `game-card ${type}-card`;
+  document.getElementById('soloCardType').textContent = type === 'truth' ? t('truth').toUpperCase() : t('dare').toUpperCase();
+  document.getElementById('soloCardText').textContent = card;
+}
+function soloReroll() { soloCard(_soloType); }
+function soloDone()   { toast('✅ ' + (lang==='ru' ? 'Выполнено! Молодец!' : 'Done! Great job!')); soloCard(_soloType); }
+function soloRefuse() { toast('😅 ' + (lang==='ru' ? 'Ничего, в следующий раз!' : 'Maybe next time!')); soloCard(_soloType); }
+
+/* ============================================
+   EXIT CONFIRM
+============================================ */
+function confirmExit() { openModal('exitModal'); }
+function doExit() {
+  closeModal('exitModal');
+  GAME.players = []; GAME.round = 1; GAME.turn = 1;
+  go('s-home');
+}
+
+/* ============================================
+   PREMIUM
+============================================ */
+function buyPremium(plan) {
+  closePremium();
+  const tg = window.Telegram?.WebApp;
+  toast(t('toast-premium'));
+  // Real: tg.openInvoice(...)
+  setTimeout(() => {
+    state.isPremium = true;
+    toast(t('toast-premium-ok'), 3000);
+    document.getElementById('settingsBadge').className = 'badge badge-pro';
+    document.getElementById('settingsBadge').textContent = '⭐ PRO';
+    document.getElementById('settingsPlan').textContent = 'Premium';
+    renderCatGrids();
+  }, 600);
+}
+
+/* ============================================
+   TELEGRAM INIT
+============================================ */
+const tgApp = window.Telegram?.WebApp;
+if (tgApp) {
+  tgApp.ready();
+  tgApp.expand();
+  tgApp.setHeaderColor('#08090f');
+  tgApp.setBackgroundColor('#08090f');
+  const user = tgApp.initDataUnsafe?.user;
+  if (user) {
+    const name = user.first_name || 'Игрок';
+    state.myName = name;
+    document.getElementById('settingsName').textContent = name;
+    document.getElementById('hostName').value = name;
+    document.getElementById('guestName').value = name;
+  }
+  tgApp.BackButton.onClick(() => {
+    const backMap = {
+      's-create':'s-home','s-join':'s-home','s-solo':'s-home',
+      's-settings':'s-home','s-lobby':'s-home',
+      's-penalty':'s-lobby','s-gamemode':'s-penalty',
+      's-wheel':null,'s-choice':'s-wheel',
+      's-card':'s-wheel','s-watch':'s-wheel',
+      's-scores':'s-wheel',
+    };
+    const dest = backMap[_current];
+    if (dest === null) { confirmExit(); }
+    else if (dest) { go(dest); }
+    else { tgApp.close(); }
+  });
+  tgApp.BackButton.show();
+}
+
+/* ============================================
+   BOOT
+============================================ */
+document.addEventListener('DOMContentLoaded', () => {
+  applyI18n();
+  renderCatGrids();
+  setMax(5);
+
+  // Settings init
+  const name = state.myName || (tgApp?.initDataUnsafe?.user?.first_name) || '—';
+  document.getElementById('settingsName').textContent = name;
+
+  // Lang buttons in settings
+  document.getElementById('set-lang-ru').classList.toggle('active', lang === 'ru');
+  document.getElementById('set-lang-en').classList.toggle('active', lang === 'en');
+});
+</script>
+</body>
+</html>
