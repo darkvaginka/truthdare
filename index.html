@@ -647,6 +647,10 @@ body::before {
   font-size: 12px; font-weight: 600; color: var(--text2);
 }
 
+@keyframes floatUp {
+  0%   { opacity:1; transform:translateY(0) scale(1); }
+  100% { opacity:0; transform:translateY(-80px) scale(1.3); }
+}
 @keyframes confettiFall {
   0%   { transform: translateY(0) rotate(0deg); opacity: 1; }
   100% { transform: translateY(200px) rotate(720deg); opacity: 0; }
@@ -2302,7 +2306,7 @@ function handleServerMsg(msg) {
       renderLobbySlots();
       updateLobbyStart();
       document.getElementById('lobbyCount').textContent =
-        ` ${msg.state.players.length}/${GAME.players.length || '?'}`;
+        ` ${msg.state.players.length}/${msg.state.maxPlayers || '?'}`;
       break;
     }
 
@@ -2404,9 +2408,9 @@ function applyServerState(serverState) {
     ...p, ws: null, // ws is server-side only
   }));
   GAME.categories  = serverState.categories || GAME.categories;
-  GAME.round       = serverState.round       || 1;
-  GAME.turn        = serverState.turn        || 1;
-  GAME.currentIdx  = serverState.currentIdx  || 0;
+  GAME.round       = serverState.round       ?? 1;
+  GAME.turn        = serverState.turn        ?? 1;
+  GAME.currentIdx  = serverState.currentIdx  ?? 0;
   _gameMode        = serverState.gameMode    || _gameMode;
   _penalty         = serverState.penalty     ?? _penalty;
   GAME.scores      = {};
@@ -2892,7 +2896,7 @@ function renderTurnScreen() {
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-outline" style="font-size:12px;flex:1" onclick="skipTurn()">⏭ ${t('skip-turn')}</button>
-        <button class="btn btn-ghost" style="font-size:12px;flex:1" onclick="advanceTurn()">
+        <button class="btn btn-ghost" style="font-size:12px;flex:1" onclick="endMyTurn()">
           ➡️ ${lang==='ru'?'Передать ход':'End my turn'}
         </button>
       </div>`;
@@ -2923,6 +2927,12 @@ function renderPenaltyBanner() {
     </div>`;
 }
 
+function endMyTurn() {
+  // In WS mode send skip (pass turn) to server; locally just advance
+  if (WS_URL) { wsSend({ type: 'task_result', result: 'skip' }); }
+  else { advanceTurn(); }
+}
+
 function autoPickCard() {
   pickType(Math.random() > 0.5 ? 'truth' : 'dare');
 }
@@ -2940,18 +2950,26 @@ function pickType(type) {
 }
 
 function skipTurn() {
-  const p = GAME.players[GAME.currentIdx];
-  p.score -= 1; GAME.scores[p.name] = p.score;
   toast(t('toast-skip'));
-  if (WS_URL) { wsSend({ type: 'task_result', result: 'skip' }); }
-  else { advanceTurn(); }
+  if (WS_URL) {
+    wsSend({ type: 'task_result', result: 'skip' });
+  } else {
+    const p = GAME.players[GAME.currentIdx];
+    p.score -= 1; GAME.scores[p.name] = p.score;
+    advanceTurn();
+  }
 }
 
 function penaltyDone() {
   document.getElementById('penaltyModal')?.classList.remove('open');
   toast('💪 ' + (lang==='ru'?'Наказание принято!':'Penalty completed!'));
-  if (WS_URL) { wsSend({ type: 'task_result', result: 'refuse' }); }
-  else { _afterAction(); }
+  if (WS_URL) {
+    wsSend({ type: 'task_result', result: 'refuse' });
+  } else {
+    const p = GAME.players[GAME.currentIdx];
+    p.score -= 1; GAME.scores[p.name] = p.score;
+    _afterAction();
+  }
 }
 
 function showCardScreen(p, type, cardText) {
@@ -2986,7 +3004,11 @@ function drawCard(type, cats) {
 
 function rerollCard() {
   const card = drawCard(GAME.currentType, GAME.categories);
-  const el   = document.getElementById('mainCardText');
+  // Notify others of new card
+  if (WS_URL) {
+    wsSend({ type: 'pick_type', cardType: GAME.currentType, cardText: card });
+  }
+  const el = document.getElementById('mainCardText');
   el.style.opacity = '0'; el.style.transform = 'translateY(6px)';
   setTimeout(() => {
     el.textContent = card;
@@ -2997,23 +3019,30 @@ function rerollCard() {
 
 function completeTask() {
   haptic('success');
-  const p = GAME.players[GAME.currentIdx];
-  p.score += 2; GAME.scores[p.name] = p.score;
   toast(t('toast-complete'));
-  if (WS_URL) { wsSend({ type: 'task_result', result: 'complete' }); }
-  else { _afterAction(); }
+  if (WS_URL) {
+    wsSend({ type: 'task_result', result: 'complete' });
+    // score updated by server via turn_result
+  } else {
+    const p = GAME.players[GAME.currentIdx];
+    p.score += 2; GAME.scores[p.name] = p.score;
+    _afterAction();
+  }
 }
 
 function refuseTask() {
   haptic('error');
-  const p = GAME.players[GAME.currentIdx];
-  p.score -= 1; GAME.scores[p.name] = p.score;
   if (_penalty) {
-    showPenaltyModal(p);
+    showPenaltyModal(GAME.players[GAME.currentIdx]);
   } else {
     toast(t('toast-refuse'));
-    if (WS_URL) { wsSend({ type: 'task_result', result: 'refuse' }); }
-    else { _afterAction(); }
+    if (WS_URL) {
+      wsSend({ type: 'task_result', result: 'refuse' });
+    } else {
+      const p = GAME.players[GAME.currentIdx];
+      p.score -= 1; GAME.scores[p.name] = p.score;
+      _afterAction();
+    }
   }
 }
 
@@ -3226,11 +3255,15 @@ function spawnConfetti(container) {
 
 function playAgain() {
   document.getElementById('winnerModal')?.classList.remove('open');
-  // Reset game state, go back to lobby setup
   GAME.players.forEach(p => { p.score = 0; GAME.scores[p.name] = 0; });
   GAME.round = 1; GAME.turn = 1; GAME.currentIdx = 0; GAME.usedCards = {};
   _turnTruthUsed = 0; _turnDareUsed = 0;
-  initGameScreen();
+  if (WS_URL && state.isHost) {
+    // Host restarts via server
+    wsSend({ type: 'start_game', gameMode: _gameMode, penalty: _penalty, categories: GAME.categories });
+  } else {
+    initGameScreen();
+  }
 }
 
 function closeWinner() {
@@ -3282,7 +3315,13 @@ function soloRefuse() { toast('😅 ' + (lang==='ru' ? 'Ничего, в сле�
 function confirmExit() { openModal('exitModal'); }
 function doExit() {
   closeModal('exitModal');
+  wsSend({ type: 'leave_room' });
+  if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; }
+  clearTimeout(_wsReconnectTimer);
+  _myId = null;
   GAME.players = []; GAME.round = 1; GAME.turn = 1;
+  GAME.currentIdx = 0; GAME.usedCards = {};
+  _turnTruthUsed = 0; _turnDareUsed = 0;
   go('s-home');
 }
 
@@ -3292,16 +3331,40 @@ function doExit() {
 function buyPremium(plan) {
   closePremium();
   const tg = window.Telegram?.WebApp;
-  toast(t('toast-premium'));
-  // Real: tg.openInvoice(...)
-  setTimeout(() => {
-    state.isPremium = true;
-    toast(t('toast-premium-ok'), 3000);
-    document.getElementById('settingsBadge').className = 'badge badge-pro';
-    document.getElementById('settingsBadge').textContent = '⭐ PRO';
-    document.getElementById('settingsPlan').textContent = 'Premium';
-    renderCatGrids();
-  }, 600);
+  // Real Stars payment — requires backend invoice endpoint
+  // When backend is ready: fetch BACKEND_URL+'/create-invoice' then tg.openInvoice(link, cb)
+  if (tg?.openInvoice && typeof BACKEND_URL !== 'undefined' && BACKEND_URL) {
+    toast(t('toast-premium'));
+    fetch(BACKEND_URL + '/create-invoice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan }),
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (!data.invoiceLink) { toast('❌ Ошибка оплаты'); return; }
+      tg.openInvoice(data.invoiceLink, (status) => {
+        if (status === 'paid') { activatePremium(); }
+        else if (status === 'cancelled') { toast('❌ Оплата отменена'); }
+      });
+    })
+    .catch(() => toast('❌ Ошибка соединения'));
+  } else {
+    // Demo mode — show message, no auto-activate
+    toast(lang === 'ru'
+      ? '⭐ Stars-оплата подключается — скоро!'
+      : '⭐ Stars payment coming soon!', 3000);
+  }
+}
+
+function activatePremium() {
+  state.isPremium = true;
+  toast(t('toast-premium-ok'), 3000);
+  const badge = document.getElementById('settingsBadge');
+  const plan  = document.getElementById('settingsPlan');
+  if (badge) { badge.className = 'badge badge-pro'; badge.textContent = '⭐ PRO'; }
+  if (plan)  { plan.textContent = 'Premium'; }
+  renderCatGrids();
 }
 
 /* ============================================
