@@ -4708,10 +4708,12 @@ function initGameScreen() {
   const p = GAME.players[GAME.currentIdx];
 
   // Determine if it's my turn
-  // In WS mode: compare by id. In demo mode: first player is always "me"
-  const isMyTurn = WS_URL
-    ? (p.id === _myId)
-    : (GAME.currentIdx === 0); // demo: player 1 is always me
+  // In WS mode: compare by id. In demo mode: always my turn (pass the phone)
+  const isMyTurn = _isDemoMode
+    ? true
+    : WS_URL
+      ? (p.id === _myId)
+      : (GAME.currentIdx === 0);
 
   if (isMyTurn) {
     renderTurnScreen();
