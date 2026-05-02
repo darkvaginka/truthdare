@@ -3358,30 +3358,41 @@ function doExit() {
 function buyPremium(plan) {
   closePremium();
   const tg = window.Telegram?.WebApp;
-  // Real Stars payment — requires backend invoice endpoint
-  // When backend is ready: fetch BACKEND_URL+'/create-invoice' then tg.openInvoice(link, cb)
-  if (tg?.openInvoice && typeof BACKEND_URL !== 'undefined' && BACKEND_URL) {
-    toast(t('toast-premium'));
-    fetch(BACKEND_URL + '/create-invoice', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan }),
-    })
-    .then(r => r.json())
-    .then(data => {
-      if (!data.invoiceLink) { toast('❌ Ошибка оплаты'); return; }
-      tg.openInvoice(data.invoiceLink, (status) => {
-        if (status === 'paid') { activatePremium(); }
-        else if (status === 'cancelled') { toast('❌ Оплата отменена'); }
-      });
-    })
-    .catch(() => toast('❌ Ошибка соединения'));
-  } else {
-    // Demo mode — show message, no auto-activate
-    toast(lang === 'ru'
-      ? '⭐ Stars-оплата подключается — скоро!'
-      : '⭐ Stars payment coming soon!', 3000);
+
+  if (!tg?.openInvoice) {
+    toast(lang==='ru'
+      ? '⭐ Открой через Telegram чтобы оплатить'
+      : '⭐ Open in Telegram to pay', 3000);
+    return;
   }
+
+  toast(lang==='ru' ? '⏳ Создаём счёт...' : '⏳ Creating invoice...', 1500);
+
+  fetch(BACKEND_URL + '/create-invoice', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ plan, lang }),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (!data.invoiceLink) {
+      toast('❌ ' + (lang==='ru' ? 'Ошибка создания счёта' : 'Invoice error'));
+      return;
+    }
+    tg.openInvoice(data.invoiceLink, (status) => {
+      if (status === 'paid') {
+        activatePremium();
+        toast(lang==='ru' ? '🎉 Premium активирован!' : '🎉 Premium activated!', 4000);
+      } else if (status === 'cancelled') {
+        toast(lang==='ru' ? '❌ Оплата отменена' : '❌ Payment cancelled');
+      } else if (status === 'failed') {
+        toast(lang==='ru' ? '❌ Ошибка оплаты' : '❌ Payment failed');
+      }
+    });
+  })
+  .catch(() => {
+    toast(lang==='ru' ? '❌ Ошибка соединения' : '❌ Connection error');
+  });
 }
 
 function activatePremium() {
@@ -3436,13 +3447,25 @@ document.addEventListener('DOMContentLoaded', () => {
   renderCatGrids();
   setMax(5);
 
-  // Settings init
   const name = state.myName || (tgApp?.initDataUnsafe?.user?.first_name) || '—';
   document.getElementById('settingsName').textContent = name;
 
-  // Lang buttons in settings
   document.getElementById('set-lang-ru').classList.toggle('active', lang === 'ru');
   document.getElementById('set-lang-en').classList.toggle('active', lang === 'en');
+
+  // Check premium status from server
+  const userId = tgApp?.initDataUnsafe?.user?.id;
+  if (userId && BACKEND_URL) {
+    fetch(`${BACKEND_URL}/premium-status?userId=${userId}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.isPremium) {
+          activatePremium();
+          console.log('[Premium] Status restored for user', userId);
+        }
+      })
+      .catch(() => {}); // Silent fail
+  }
 });
 </script>
 </body>
