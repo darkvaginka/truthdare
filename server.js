@@ -1,7 +1,6 @@
 /**
  * Truth or Dare — Backend Server
- * WebSocket rooms + REST health check
- * Deploy to Railway / Render / Fly.io
+ * WebSocket rooms + Stars payments + Persistent premium
  */
 
 const express  = require('express');
@@ -9,460 +8,312 @@ const { WebSocketServer, WebSocket } = require('ws');
 const cors     = require('cors');
 const http     = require('http');
 const crypto   = require('crypto');
+const fs       = require('fs');
+const path     = require('path');
 
-const PORT = process.env.PORT || 3000;
+const PORT      = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
+
+/* ============================================
+   PERSISTENT PREMIUM STORAGE
+============================================ */
+const DB_PATH = path.join('/tmp', 'premium.json');
+
+function loadDB() {
+  try {
+    if (fs.existsSync(DB_PATH)) return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+  } catch(e) { console.error('[DB] Load error:', e.message); }
+  return {};
+}
+
+function saveDB(db) {
+  try { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); }
+  catch(e) { console.error('[DB] Save error:', e.message); }
+}
+
+let premiumDB = loadDB();
+
+function getPremiumStatus(userId) {
+  const record = premiumDB[String(userId)];
+  if (!record) return { isPremium: false };
+  if (record.plan === 'forever') return { isPremium: true, plan: 'forever', expiresAt: null };
+  if (record.expiresAt && Date.now() < record.expiresAt)
+    return { isPremium: true, plan: 'month', expiresAt: record.expiresAt };
+  return { isPremium: false, plan: 'expired', expiresAt: record.expiresAt };
+}
+
+function activatePremium(userId, plan) {
+  const uid = String(userId);
+  const existing = premiumDB[uid];
+  const now = Date.now();
+  if (plan === 'forever') {
+    premiumDB[uid] = { plan: 'forever', purchasedAt: now, expiresAt: null };
+  } else {
+    const base = (existing?.plan === 'month' && existing.expiresAt > now)
+      ? existing.expiresAt : now;
+    premiumDB[uid] = { plan: 'month', purchasedAt: now, expiresAt: base + 30*24*60*60*1000 };
+  }
+  saveDB(premiumDB);
+  return getPremiumStatus(uid);
+}
 
 /* ============================================
    EXPRESS APP
 ============================================ */
 const app    = express();
 const server = http.createServer(app);
-
-app.use(cors());
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// Health check
 app.get('/', (_, res) => res.json({ ok: true, service: 'ToD Server', rooms: rooms.size }));
-
-// Webhook for Telegram Bot
 app.post('/webhook', handleBotWebhook);
 
 /* ============================================
    STARS PAYMENTS
 ============================================ */
 const PREMIUM_PLANS = {
-  forever: { stars: 299, label: 'Premium навсегда', labelEn: 'Premium Forever' },
-  month:   { stars: 49,  label: 'Premium на месяц', labelEn: 'Premium Monthly' },
+  forever: { stars: 299, label: 'Premium навсегда',   labelEn: 'Premium Forever'  },
+  month:   { stars: 49,  label: 'Premium на 30 дней', labelEn: 'Premium 30 days'  },
 };
 
-// Create invoice link
 app.post('/create-invoice', async (req, res) => {
-  const { plan, lang } = req.body;
+  const { plan, lang, userId } = req.body;
   const p = PREMIUM_PLANS[plan];
   if (!p) return res.status(400).json({ error: 'Invalid plan' });
 
   const isRu = lang === 'ru';
+  let description = isRu ? 'Все категории, до 10 игроков, без ограничений' : 'All categories, up to 10 players, no limits';
+
+  // If user already has monthly — show extension date
+  if (plan === 'month' && userId) {
+    const status = getPremiumStatus(userId);
+    if (status.isPremium && status.plan === 'month') {
+      const d = new Date(status.expiresAt + 30*24*60*60*1000);
+      description = isRu ? `Продление до ${d.toLocaleDateString('ru-RU')}` : `Extends to ${d.toLocaleDateString('en-US')}`;
+    }
+  }
+
   try {
     const resp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/createInvoiceLink`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title:          isRu ? '⭐ Правда или Действие Premium' : '⭐ Truth or Dare Premium',
-        description:    isRu
-          ? 'Все категории, до 10 игроков, без ограничений'
-          : 'All categories, up to 10 players, no limits',
-        payload:        `premium_${plan}_${Date.now()}`,
-        currency:       'XTR',
-        prices:         [{ label: isRu ? p.label : p.labelEn, amount: p.stars }],
+        title:       isRu ? '⭐ Правда или Действие Premium' : '⭐ Truth or Dare Premium',
+        description,
+        payload:     `premium_${plan}_${userId||'anon'}_${Date.now()}`,
+        currency:    'XTR',
+        prices:      [{ label: isRu ? p.label : p.labelEn, amount: p.stars }],
       }),
     });
     const data = await resp.json();
-    if (!data.ok) {
-      console.error('[Stars] createInvoiceLink error:', data);
-      return res.status(500).json({ error: data.description });
-    }
+    if (!data.ok) return res.status(500).json({ error: data.description });
     res.json({ invoiceLink: data.result });
-  } catch (e) {
-    console.error('[Stars] Error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Verify premium status
-app.get('/premium-status', async (req, res) => {
+app.get('/premium-status', (req, res) => {
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: 'No userId' });
-  const isPremium = premiumUsers.has(String(userId));
-  res.json({ isPremium });
+  res.json(getPremiumStatus(userId));
 });
-
-// In-memory premium store (replace with DB in production)
-const premiumUsers = new Set();
 
 /* ============================================
    ROOM STATE
-   rooms: Map<code, Room>
 ============================================ */
 const rooms = new Map();
 
 function genCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+  return Array.from({length:4}, () => chars[Math.floor(Math.random()*chars.length)]).join('');
 }
 
 function createRoom(hostWs, hostName, hostAvatar, categories, maxPlayers, gameMode, penalty) {
-  let code;
-  do { code = genCode(); } while (rooms.has(code));
-
+  let code; do { code = genCode(); } while (rooms.has(code));
   const room = {
-    code,
-    hostId: hostWs.clientId,
-    maxPlayers,
-    gameMode,
-    penalty: penalty || null,
-    categories: categories || ['friends', 'family'],
-    players: [{
-      id:     hostWs.clientId,
-      name:   hostName,
-      avatar: hostAvatar,
-      score:  0,
-      ws:     hostWs,
-    }],
-    // Game state
-    started:      false,
-    currentIdx:   0,
-    round:        1,
-    turn:         1,
-    usedCards:    {},
-    createdAt:    Date.now(),
+    code, hostId: hostWs.clientId, maxPlayers, gameMode,
+    penalty: penalty||null, categories: categories||['friends','family'],
+    players: [{ id: hostWs.clientId, name: hostName, avatar: hostAvatar, score: 0, ws: hostWs }],
+    started: false, currentIdx: 0, round: 1, turn: 1, usedCards: {}, createdAt: Date.now(),
   };
-
   rooms.set(code, room);
   hostWs.roomCode = code;
-
-  // Auto-cleanup after 4 hours
-  setTimeout(() => {
-    if (rooms.has(code)) {
-      broadcast(room, { type: 'room_expired' });
-      rooms.delete(code);
-    }
-  }, 4 * 60 * 60 * 1000);
-
+  setTimeout(() => { if (rooms.has(code)) { broadcast(room, {type:'room_expired'}); rooms.delete(code); } }, 4*60*60*1000);
   return room;
 }
 
-/* ============================================
-   BROADCAST HELPERS
-============================================ */
-function broadcast(room, msg, excludeId = null) {
+function broadcast(room, msg, excludeId=null) {
   const data = JSON.stringify(msg);
-  room.players.forEach(p => {
-    if (p.id !== excludeId && p.ws.readyState === WebSocket.OPEN) {
-      p.ws.send(data);
-    }
-  });
+  room.players.forEach(p => { if (p.id!==excludeId && p.ws?.readyState===WebSocket.OPEN) p.ws.send(data); });
 }
 
-function sendTo(ws, msg) {
-  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
-}
+function sendTo(ws, msg) { if (ws?.readyState===WebSocket.OPEN) ws.send(JSON.stringify(msg)); }
 
 function roomPublicState(room) {
   return {
-    code:        room.code,
-    gameMode:    room.gameMode,
-    penalty:     room.penalty,
-    categories:  room.categories,
-    maxPlayers:  room.maxPlayers,
-    started:     room.started,
-    currentIdx:  room.currentIdx,
-    round:       room.round,
-    turn:        room.turn,
-    players:     room.players.map(p => ({
-      id:     p.id,
-      name:   p.name,
-      avatar: p.avatar,
-      score:  p.score,
-    })),
+    code: room.code, gameMode: room.gameMode, penalty: room.penalty,
+    categories: room.categories, maxPlayers: room.maxPlayers, started: room.started,
+    currentIdx: room.currentIdx, round: room.round, turn: room.turn,
+    players: room.players.map(p => ({ id:p.id, name:p.name, avatar:p.avatar, score:p.score })),
   };
 }
 
 /* ============================================
    WEBSOCKET SERVER
 ============================================ */
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, verifyClient: () => true });
 
 wss.on('connection', (ws) => {
   ws.clientId = crypto.randomUUID();
-  ws.isAlive   = true;
-
-  console.log(`[WS] Connected: ${ws.clientId}`);
-
+  ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
-
-  ws.on('message', (raw) => {
-    let msg;
-    try { msg = JSON.parse(raw); } catch { return; }
-    handleMessage(ws, msg);
-  });
-
+  ws.on('message', (raw) => { try { handleMessage(ws, JSON.parse(raw)); } catch{} });
   ws.on('close', () => handleDisconnect(ws));
-  ws.on('error', (e) => console.error('[WS] Error:', e.message));
+  ws.on('error', (e) => console.error('[WS]', e.message));
 });
 
-// Heartbeat — kick dead connections every 30s
 const heartbeat = setInterval(() => {
-  wss.clients.forEach(ws => {
-    if (!ws.isAlive) { ws.terminate(); return; }
-    ws.isAlive = false;
-    ws.ping();
-  });
-}, 30_000);
-
+  wss.clients.forEach(ws => { if (!ws.isAlive) { ws.terminate(); return; } ws.isAlive=false; ws.ping(); });
+}, 30000);
 wss.on('close', () => clearInterval(heartbeat));
 
-/* ============================================
-   MESSAGE HANDLER
-============================================ */
 function handleMessage(ws, msg) {
-  const { type } = msg;
-
-  switch (type) {
-
-    // ── Create room ──────────────────────────
+  switch(msg.type) {
     case 'create_room': {
-      const { name, avatar, categories, maxPlayers, gameMode, penalty } = msg;
-      if (!name) return sendTo(ws, { type: 'error', code: 'NO_NAME' });
-
-      const room = createRoom(ws, name, avatar || '😀', categories, maxPlayers || 5, gameMode || 'turns', penalty);
-
-      sendTo(ws, {
-        type:  'room_created',
-        state: roomPublicState(room),
-        myId:  ws.clientId,
-      });
-
-      console.log(`[Room] Created: ${room.code} by ${name}`);
+      if (!msg.name) return sendTo(ws, {type:'error',code:'NO_NAME'});
+      const room = createRoom(ws, msg.name, msg.avatar||'😀', msg.categories, msg.maxPlayers||5, msg.gameMode||'turns', msg.penalty);
+      sendTo(ws, {type:'room_created', state:roomPublicState(room), myId:ws.clientId});
       break;
     }
-
-    // ── Join room ────────────────────────────
     case 'join_room': {
-      const { code, name, avatar } = msg;
-      const room = rooms.get(code?.toUpperCase());
-
-      if (!room)          return sendTo(ws, { type: 'error', code: 'ROOM_NOT_FOUND' });
-      if (room.started)   return sendTo(ws, { type: 'error', code: 'GAME_STARTED' });
-      if (room.players.length >= room.maxPlayers)
-                          return sendTo(ws, { type: 'error', code: 'ROOM_FULL' });
-
-      // Reconnect if same name
-      const existing = room.players.find(p => p.name === name);
+      const room = rooms.get(msg.code?.toUpperCase());
+      if (!room)        return sendTo(ws, {type:'error',code:'ROOM_NOT_FOUND'});
+      if (room.started) return sendTo(ws, {type:'error',code:'GAME_STARTED'});
+      if (room.players.length >= room.maxPlayers) return sendTo(ws, {type:'error',code:'ROOM_FULL'});
+      const existing = room.players.find(p => p.name===msg.name);
       if (existing) {
-        existing.ws = ws;
-        existing.id = ws.clientId;
-        ws.roomCode  = code;
-        sendTo(ws, { type: 'rejoined', state: roomPublicState(room), myId: ws.clientId });
-        broadcast(room, { type: 'player_rejoined', name }, ws.clientId);
+        existing.ws=ws; existing.id=ws.clientId; ws.roomCode=msg.code;
+        sendTo(ws, {type:'rejoined', state:roomPublicState(room), myId:ws.clientId});
+        broadcast(room, {type:'player_rejoined', name:msg.name}, ws.clientId);
         return;
       }
-
-      const player = { id: ws.clientId, name, avatar: avatar || '😀', score: 0, ws };
-      room.players.push(player);
-      ws.roomCode = code;
-
-      sendTo(ws, { type: 'room_joined', state: roomPublicState(room), myId: ws.clientId });
-      broadcast(room, {
-        type:   'player_joined',
-        player: { id: ws.clientId, name, avatar: avatar || '😀', score: 0 },
-        state:  roomPublicState(room),
-      }, ws.clientId);
-
-      console.log(`[Room] ${name} joined ${code} (${room.players.length}/${room.maxPlayers})`);
+      const player = {id:ws.clientId, name:msg.name, avatar:msg.avatar||'😀', score:0, ws};
+      room.players.push(player); ws.roomCode=msg.code;
+      sendTo(ws, {type:'room_joined', state:roomPublicState(room), myId:ws.clientId});
+      broadcast(room, {type:'player_joined', player:{id:ws.clientId,name:msg.name,avatar:msg.avatar||'😀',score:0}, state:roomPublicState(room)}, ws.clientId);
       break;
     }
-
-    // ── Update room settings (host only) ─────
     case 'update_settings': {
       const room = rooms.get(ws.roomCode);
-      if (!room || room.hostId !== ws.clientId) return;
-      if (room.started) return;
-
-      const allowed = ['categories','gameMode','penalty','maxPlayers'];
-      allowed.forEach(k => { if (msg[k] !== undefined) room[k] = msg[k]; });
-
-      broadcast(room, { type: 'settings_updated', state: roomPublicState(room) });
+      if (!room||room.hostId!==ws.clientId||room.started) return;
+      ['categories','gameMode','penalty','maxPlayers'].forEach(k => { if (msg[k]!==undefined) room[k]=msg[k]; });
+      broadcast(room, {type:'settings_updated', state:roomPublicState(room)});
       break;
     }
-
-    // ── Start game (host only) ───────────────
     case 'start_game': {
       const room = rooms.get(ws.roomCode);
-      if (!room || room.hostId !== ws.clientId) return;
-      if (room.players.length < 2) return sendTo(ws, { type: 'error', code: 'NEED_MORE_PLAYERS' });
-
-      room.started    = true;
-      room.currentIdx = 0;
-      room.round      = 1;
-      room.turn       = 1;
-      room.usedCards  = {};
-      room.players.forEach(p => { p.score = 0; });
-
-      broadcast(room, { type: 'game_started', state: roomPublicState(room) });
-      console.log(`[Room] Game started: ${room.code}`);
+      if (!room||room.hostId!==ws.clientId) return;
+      if (room.players.length<2) return sendTo(ws, {type:'error',code:'NEED_MORE_PLAYERS'});
+      if (msg.gameMode)  room.gameMode=msg.gameMode;
+      if (msg.penalty!==undefined) room.penalty=msg.penalty;
+      if (msg.categories) room.categories=msg.categories;
+      room.started=true; room.currentIdx=0; room.round=1; room.turn=1; room.usedCards={};
+      room.players.forEach(p => { p.score=0; });
+      broadcast(room, {type:'game_started', state:roomPublicState(room)});
       break;
     }
-
-    // ── Player picked card type ──────────────
     case 'pick_type': {
       const room = rooms.get(ws.roomCode);
-      if (!room || !room.started) return;
-      const currentPlayer = room.players[room.currentIdx];
-      if (currentPlayer.id !== ws.clientId) return; // not your turn
-
-      broadcast(room, {
-        type:     'type_picked',
-        cardType: msg.cardType, // 'truth' | 'dare'
-        playerId: ws.clientId,
-      });
+      if (!room||!room.started) return;
+      if (room.players[room.currentIdx]?.id!==ws.clientId) return;
+      broadcast(room, {type:'type_picked', cardType:msg.cardType, cardText:msg.cardText, playerId:ws.clientId});
       break;
     }
-
-    // ── Task completed / refused / skipped ───
     case 'task_result': {
       const room = rooms.get(ws.roomCode);
-      if (!room || !room.started) return;
-      const currentPlayer = room.players[room.currentIdx];
-      if (currentPlayer.id !== ws.clientId) return;
-
-      const { result } = msg; // 'complete' | 'refuse' | 'skip'
-      const delta = result === 'complete' ? 2 : -1;
-      currentPlayer.score += delta;
-
-      // Advance turn
+      if (!room||!room.started) return;
+      if (room.players[room.currentIdx]?.id!==ws.clientId) return;
+      const delta = msg.result==='complete' ? 2 : -1;
+      room.players[room.currentIdx].score += delta;
       room.turn++;
-      if (room.turn > room.players.length) { room.turn = 1; room.round++; }
-      room.currentIdx = (room.currentIdx + 1) % room.players.length;
-
-      broadcast(room, {
-        type:   'turn_result',
-        result,
-        delta,
-        state:  roomPublicState(room),
-      });
+      if (room.turn>room.players.length) { room.turn=1; room.round++; }
+      room.currentIdx = (room.currentIdx+1) % room.players.length;
+      broadcast(room, {type:'turn_result', result:msg.result, delta, state:roomPublicState(room)});
       break;
     }
-
-    // ── Chat / reaction ──────────────────────
     case 'reaction': {
       const room = rooms.get(ws.roomCode);
       if (!room) return;
-      const player = room.players.find(p => p.id === ws.clientId);
-      if (!player) return;
-      broadcast(room, {
-        type:     'reaction',
-        emoji:    msg.emoji,
-        name:     player.name,
-        avatar:   player.avatar,
-      }, ws.clientId);
+      const player = room.players.find(p => p.id===ws.clientId);
+      if (player) broadcast(room, {type:'reaction', emoji:msg.emoji, name:player.name, avatar:player.avatar}, ws.clientId);
       break;
     }
-
-    // ── Leave room ───────────────────────────
-    case 'leave_room': {
-      handleDisconnect(ws);
-      break;
-    }
-
-    // ── Ping ────────────────────────────────
-    case 'ping': {
-      sendTo(ws, { type: 'pong' });
-      break;
-    }
-
-    default:
-      console.warn('[WS] Unknown message type:', type);
+    case 'leave_room': handleDisconnect(ws); break;
+    case 'ping': sendTo(ws, {type:'pong'}); break;
   }
 }
 
-/* ============================================
-   DISCONNECT HANDLER
-============================================ */
 function handleDisconnect(ws) {
   const code = ws.roomCode;
   if (!code) return;
-
   const room = rooms.get(code);
   if (!room) return;
-
-  const idx = room.players.findIndex(p => p.id === ws.clientId);
-  if (idx === -1) return;
-
+  const idx = room.players.findIndex(p => p.id===ws.clientId);
+  if (idx===-1) return;
   const player = room.players[idx];
-  console.log(`[Room] ${player.name} disconnected from ${code}`);
-
-  // If game not started — remove completely
   if (!room.started) {
-    room.players.splice(idx, 1);
-    if (room.players.length === 0) {
-      rooms.delete(code);
-      return;
-    }
-    // Transfer host if needed
-    if (room.hostId === ws.clientId) {
-      room.hostId = room.players[0].id;
-      broadcast(room, { type: 'host_changed', newHostId: room.hostId });
-    }
-    broadcast(room, { type: 'player_left', name: player.name, state: roomPublicState(room) });
+    room.players.splice(idx,1);
+    if (room.players.length===0) { rooms.delete(code); return; }
+    if (room.hostId===ws.clientId) { room.hostId=room.players[0].id; broadcast(room,{type:'host_changed',newHostId:room.hostId}); }
+    broadcast(room, {type:'player_left', name:player.name, state:roomPublicState(room)});
     return;
   }
-
-  // Game started — keep player but mark offline
-  player.ws = null;
-  broadcast(room, { type: 'player_offline', name: player.name, playerId: ws.clientId });
-
-  // If all players offline — delete room after 10 min
-  const allOffline = room.players.every(p => !p.ws || p.ws.readyState !== WebSocket.OPEN);
-  if (allOffline) {
-    setTimeout(() => {
-      if (rooms.has(code)) {
-        const r = rooms.get(code);
-        const stillAllOffline = r.players.every(p => !p.ws || p.ws.readyState !== WebSocket.OPEN);
-        if (stillAllOffline) rooms.delete(code);
-      }
-    }, 10 * 60 * 1000);
-  }
+  player.ws=null;
+  broadcast(room, {type:'player_offline', name:player.name, playerId:ws.clientId});
+  const allOffline = room.players.every(p => !p.ws||p.ws.readyState!==WebSocket.OPEN);
+  if (allOffline) setTimeout(() => {
+    if (rooms.has(code) && rooms.get(code).players.every(p => !p.ws||p.ws.readyState!==WebSocket.OPEN)) rooms.delete(code);
+  }, 10*60*1000);
 }
 
 /* ============================================
    TELEGRAM BOT WEBHOOK
 ============================================ */
 async function handleBotWebhook(req, res) {
-  res.json({ ok: true }); // respond fast
-
+  res.json({ok:true});
   const update = req.body;
 
-  // ── Pre-checkout: must answer within 10 seconds ──
   if (update.pre_checkout_query) {
-    const pcq = update.pre_checkout_query;
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerPreCheckoutQuery`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pre_checkout_query_id: pcq.id, ok: true }),
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({pre_checkout_query_id:update.pre_checkout_query.id, ok:true}),
     });
     return;
   }
 
-  // ── Successful payment ──
   if (update.message?.successful_payment) {
     const userId  = String(update.message.from.id);
     const payload = update.message.successful_payment.invoice_payload;
-    const stars   = update.message.successful_payment.total_amount;
-
-    premiumUsers.add(userId);
-    console.log(`[Stars] Payment received: userId=${userId}, payload=${payload}, stars=${stars}`);
-
-    // Notify user
-    const isForever = payload.includes('forever');
+    const plan    = payload.includes('forever') ? 'forever' : 'month';
+    const status  = activatePremium(userId, plan);
+    const expireStr = status.expiresAt ? new Date(status.expiresAt).toLocaleDateString('ru-RU') : null;
     await botSend(update.message.chat.id, {
-      text: isForever
-        ? '🎉 Premium активирован навсегда! Наслаждайся игрой без ограничений ⭐'
-        : '🎉 Premium активирован на месяц! Приятной игры ⭐',
+      text: plan==='forever'
+        ? '🎉 Premium активирован навсегда!\nВсе категории разблокированы ⭐'
+        : `🎉 Premium активирован!\nДействует до: ${expireStr} ⭐\nДля продления купи снова — дни добавятся.`,
     });
     return;
   }
 
-  if (!update?.message) return;
-
-  const msg  = update.message;
-  const chat = msg.chat.id;
-  const text = msg.text || '';
-
-  if (text === '/start') {
-    await botSend(chat, botStartMessage());
-  } else if (text === '/help') {
-    await botSend(chat, botHelpMessage());
+  if (!update?.message?.text) return;
+  const {chat, text} = update.message;
+  if (text.startsWith('/start')) await botSend(chat.id, botStartMessage());
+  else if (text==='/help')     await botSend(chat.id, botHelpMessage());
+  else if (text==='/premium')  {
+    const status = getPremiumStatus(String(update.message.from.id));
+    const expireStr = status.expiresAt ? `до ${new Date(status.expiresAt).toLocaleDateString('ru-RU')}` : 'навсегда';
+    await botSend(chat.id, {
+      text: status.isPremium ? `⭐ Premium активен ${expireStr}!` : '❌ Premium не активен',
+    });
   }
 }
 
@@ -470,22 +321,13 @@ function botStartMessage() {
   return {
     text: '🔥 *Правда или Действие*\n\nНажми кнопку ниже чтобы начать игру!',
     parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: [[{
-        text: '🎮 Открыть игру',
-        web_app: { url: process.env.WEBAPP_URL || 'https://your-app.vercel.app' },
-      }]]
-    }
+    reply_markup: { inline_keyboard: [[{ text:'🎮 Открыть игру', web_app:{url:process.env.WEBAPP_URL||'https://truthdare-dusky.vercel.app'} }]] },
   };
 }
 
 function botHelpMessage() {
   return {
-    text: '🎮 *Правда или Действие* — игра для компании!\n\n' +
-          '• Создай комнату и пригласи друзей\n' +
-          '• Каждый играет со своего телефона\n' +
-          '• Выбирай наказание и режим игры\n\n' +
-          '⭐ Premium даёт доступ к горячим категориям, больше игроков и AI-вопросы',
+    text: '🎮 *Правда или Действие*\n\n• Создай комнату, пригласи друзей\n• Каждый играет со своего телефона\n\n⭐ Premium: все категории, до 10 игроков\n\n/premium — статус подписки',
     parse_mode: 'Markdown',
   };
 }
@@ -494,20 +336,14 @@ async function botSend(chatId, payload) {
   if (!BOT_TOKEN) return;
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ chat_id: chatId, ...payload }),
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({chat_id:chatId, ...payload}),
     });
-  } catch(e) {
-    console.error('[Bot] Send error:', e.message);
-  }
+  } catch(e) { console.error('[Bot]', e.message); }
 }
 
-/* ============================================
-   START
-============================================ */
 server.listen(PORT, () => {
-  console.log(`\n🔥 ToD Server running on port ${PORT}`);
-  console.log(`   Rooms: 0`);
-  console.log(`   Bot token: ${BOT_TOKEN ? '✅ set' : '❌ not set'}\n`);
+  console.log(`\n🔥 ToD Server on port ${PORT}`);
+  console.log(`   Premium users: ${Object.keys(premiumDB).length}`);
+  console.log(`   Bot: ${BOT_TOKEN ? '✅' : '❌'}\n`);
 });
