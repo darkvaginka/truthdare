@@ -4517,45 +4517,85 @@ function setMax(n) {
 // Production server URLs — hardcoded for deployment
 const BACKEND_URL = 'https://truthdare-production.up.railway.app';
 const WEBAPP_URL  = 'https://truthdare-dusky.vercel.app';
-
+ 
 const WS_URL = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL)
   ? BACKEND_URL.replace(/^http/, 'ws')
   : null;
-
-let _ws = null;
+ 
+let _ws               = null;
 let _wsReconnectTimer = null;
-let _myId = null;   // server-assigned player id
-
+let _heartbeatTimer   = null;   // FIX: heartbeat против Railway timeout
+let _myId             = null;   // server-assigned player id
+let _wsReconnecting   = false;  // FIX: флаг активного реконнекта
+let _savedRoomCode    = null;   // FIX: сохраняем код комнаты
+ 
+// FIX: оверлей «Переподключение...»
+function showReconnectOverlay(show) {
+  const el = document.getElementById('reconnectOverlay');
+  if (!el) return;
+  if (show) {
+    el.classList.add('show');
+    const msg = document.getElementById('reconnectMsg');
+    if (msg) msg.textContent = lang === 'ru' ? 'Восстанавливаем соединение...' : 'Reconnecting...';
+  } else {
+    el.classList.remove('show');
+  }
+}
+ 
 function wsConnect(onOpen) {
-  if (!WS_URL) {
-    // No server — run in local demo mode
-    if (onOpen) onOpen();
-    return;
-  }
-  if (_ws && _ws.readyState === WebSocket.OPEN) {
-    if (onOpen) onOpen();
-    return;
-  }
+  if (!WS_URL) { if (onOpen) onOpen(); return; }
+  if (_ws && _ws.readyState === WebSocket.OPEN) { if (onOpen) onOpen(); return; }
+ 
   _ws = new WebSocket(WS_URL);
+ 
   _ws.onopen = () => {
     console.log('[WS] Connected to', WS_URL);
-    toast(lang==='ru'?'🟢 Сервер подключён':'🟢 Server connected', 1500);
-    if (onOpen) onOpen();
+    clearTimeout(_wsReconnectTimer);
+    showReconnectOverlay(false);
+ 
+    // FIX: Heartbeat — Railway рвёт idle соединения через ~55 сек
+    clearInterval(_heartbeatTimer);
+    _heartbeatTimer = setInterval(() => {
+      if (_ws?.readyState === WebSocket.OPEN) {
+        _ws.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, 25000);
+ 
+    if (_wsReconnecting && _savedRoomCode && state.myName) {
+      // FIX: Возврат после скрытия приложения — переподключаемся по имени
+      console.log('[WS] Rejoining room', _savedRoomCode, 'as', state.myName);
+      _ws.send(JSON.stringify({
+        type:   'join_room',
+        code:   _savedRoomCode,
+        name:   state.myName,
+        avatar: state.myAvatar,
+      }));
+    } else {
+      _wsReconnecting = false;
+      if (onOpen) onOpen();
+    }
   };
+ 
   _ws.onmessage = (e) => {
     try { handleServerMsg(JSON.parse(e.data)); }
     catch(err) { console.error('[WS] Parse error', err); }
   };
+ 
   _ws.onclose = () => {
-    console.log('[WS] Disconnected — reconnecting...');
-    _wsReconnectTimer = setTimeout(() => wsConnect(), 3000);
+    clearInterval(_heartbeatTimer);
+    // Реконнектим только если есть активная комната
+    const activeRoom = _savedRoomCode || state.roomCode;
+    if (!activeRoom) return;
+    _wsReconnecting = true;
+    showReconnectOverlay(true);
+    console.log('[WS] Disconnected — reconnecting in 2s...');
+    clearTimeout(_wsReconnectTimer);
+    _wsReconnectTimer = setTimeout(() => wsConnect(), 2000);
   };
-  _ws.onerror = (e) => {
-    console.error('[WS] Error', e);
-    toast(lang==='ru'?'❌ Ошибка подключения к серверу':'❌ Server connection error');
-  };
+ 
+  _ws.onerror = (e) => { console.error('[WS] Error', e); };
 }
-
+ 
 function wsSend(msg) {
   if (_ws && _ws.readyState === WebSocket.OPEN) {
     _ws.send(JSON.stringify(msg));
@@ -4563,7 +4603,7 @@ function wsSend(msg) {
   }
   return false;
 }
-
+   
 function handleServerMsg(msg) {
   switch (msg.type) {
 
