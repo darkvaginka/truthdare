@@ -1,6 +1,7 @@
 /**
  * Truth or Dare — Backend Server
  * WebSocket rooms + Stars payments + PostgreSQL premium storage
+ * FIX: reconnect grace period, name-based rejoin, auto-skip disconnected player
  */
 
 const express  = require('express');
@@ -54,7 +55,6 @@ async function activatePremium(userId, plan) {
   let expiresAt = null;
 
   if (plan === 'month') {
-    // Extend from existing expiry if still active
     const existing = await getPremiumStatus(uid);
     const base = (existing.isPremium && existing.plan === 'month' && existing.expiresAt > now)
       ? existing.expiresAt : now;
@@ -143,7 +143,6 @@ app.get('/premium-status', async (req, res) => {
   res.json(status);
 });
 
-// Admin: manually grant premium (protected by secret)
 app.post('/admin/grant-premium', async (req, res) => {
   const { secret, userId, plan } = req.body;
   if (secret !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
@@ -170,9 +169,12 @@ function createRoom(hostWs, hostName, hostAvatar, categories, maxPlayers, gameMo
     hostIsPremium: hostIsPremium||false,
     players: [{ id: hostWs.clientId, name: hostName, avatar: hostAvatar, score: 0, ws: hostWs }],
     started: false, currentIdx: 0, round: 1, turn: 1, usedCards: {}, createdAt: Date.now(),
+    _disconnectTimers: {},  // таймеры реконнекта по clientId
+    _autoSkipTimers: {},    // таймеры автопропуска хода
   };
   rooms.set(code, room);
   hostWs.roomCode = code;
+  // Автоудаление комнаты через 4 часа
   setTimeout(() => {
     if (rooms.has(code)) { broadcast(room, {type:'room_expired'}); rooms.delete(code); }
   }, 4*60*60*1000);
@@ -207,13 +209,14 @@ const wss = new WebSocketServer({ server, verifyClient: () => true });
 
 wss.on('connection', (ws) => {
   ws.clientId = crypto.randomUUID();
-  ws.isAlive = true;
+  ws.isAlive   = true;
   ws.on('pong', () => { ws.isAlive = true; });
-  ws.on('message', (raw) => { try { handleMessage(ws, JSON.parse(raw)); } catch{} });
+  ws.on('message', (raw) => { try { handleMessage(ws, JSON.parse(raw)); } catch(e) { console.error('[WS] msg error', e.message); } });
   ws.on('close', () => handleDisconnect(ws));
   ws.on('error', (e) => console.error('[WS]', e.message));
 });
 
+// Heartbeat — проверяем живые соединения каждые 30 сек
 const heartbeat = setInterval(() => {
   wss.clients.forEach(ws => {
     if (!ws.isAlive) { ws.terminate(); return; }
@@ -222,28 +225,63 @@ const heartbeat = setInterval(() => {
 }, 30000);
 wss.on('close', () => clearInterval(heartbeat));
 
+/* ============================================
+   MESSAGE HANDLER
+============================================ */
 function handleMessage(ws, msg) {
   switch(msg.type) {
+
     case 'create_room': {
       if (!msg.name) return sendTo(ws, {type:'error', code:'NO_NAME'});
-      const room = createRoom(ws, msg.name, msg.avatar||'😀', msg.categories, msg.maxPlayers||5, msg.gameMode||'turns', msg.penalty, msg.hostIsPremium||false);
+      const room = createRoom(
+        ws, msg.name, msg.avatar||'😀',
+        msg.categories, msg.maxPlayers||5,
+        msg.gameMode||'turns', msg.penalty,
+        msg.hostIsPremium||false
+      );
       sendTo(ws, {type:'room_created', state:roomPublicState(room), myId:ws.clientId});
       break;
     }
+
     case 'join_room': {
-      const room = rooms.get(msg.code?.toUpperCase());
-      if (!room)        return sendTo(ws, {type:'error', code:'ROOM_NOT_FOUND'});
-      if (room.started) return sendTo(ws, {type:'error', code:'GAME_STARTED'});
-      if (room.players.length >= room.maxPlayers) return sendTo(ws, {type:'error', code:'ROOM_FULL'});
-      const existing = room.players.find(p => p.name === msg.name);
+      const code = msg.code?.toUpperCase();
+      const room = rooms.get(code);
+      if (!room) return sendTo(ws, {type:'error', code:'ROOM_NOT_FOUND'});
+      if (room.started && !room.players.find(p => p.name === msg.name)) {
+        return sendTo(ws, {type:'error', code:'GAME_STARTED'});
+      }
+
+      // FIX: ищем по clientId ИЛИ по имени (реконнект после обрыва соединения)
+      const existing = room.players.find(
+        p => p.id === ws.clientId || (!p.ws || p.ws.readyState !== WebSocket.OPEN) && p.name === msg.name
+      );
+
       if (existing) {
-        existing.ws = ws; existing.id = ws.clientId; ws.roomCode = msg.code;
+        // Отменяем таймеры реконнекта и автопропуска
+        if (room._disconnectTimers[existing.id]) {
+          clearTimeout(room._disconnectTimers[existing.id]);
+          delete room._disconnectTimers[existing.id];
+        }
+        if (room._autoSkipTimers[existing.id]) {
+          clearTimeout(room._autoSkipTimers[existing.id]);
+          delete room._autoSkipTimers[existing.id];
+        }
+        existing.ws = ws;
+        existing.id = ws.clientId;
+        ws.roomCode = code;
         sendTo(ws, {type:'rejoined', state:roomPublicState(room), myId:ws.clientId});
-        broadcast(room, {type:'player_rejoined', name:msg.name}, ws.clientId);
+        broadcast(room, {type:'player_rejoined', name:existing.name}, ws.clientId);
+        console.log(`[Room ${code}] ${existing.name} rejoined`);
         return;
       }
+
+      // Новый игрок
+      if (!room.started && room.players.length >= room.maxPlayers) {
+        return sendTo(ws, {type:'error', code:'ROOM_FULL'});
+      }
       const player = { id:ws.clientId, name:msg.name, avatar:msg.avatar||'😀', score:0, ws };
-      room.players.push(player); ws.roomCode = msg.code;
+      room.players.push(player);
+      ws.roomCode = code;
       sendTo(ws, {type:'room_joined', state:roomPublicState(room), myId:ws.clientId});
       broadcast(room, {
         type:'player_joined',
@@ -252,6 +290,7 @@ function handleMessage(ws, msg) {
       }, ws.clientId);
       break;
     }
+
     case 'update_settings': {
       const room = rooms.get(ws.roomCode);
       if (!room || room.hostId !== ws.clientId || room.started) return;
@@ -261,18 +300,20 @@ function handleMessage(ws, msg) {
       broadcast(room, {type:'settings_updated', state:roomPublicState(room)});
       break;
     }
+
     case 'start_game': {
       const room = rooms.get(ws.roomCode);
       if (!room || room.hostId !== ws.clientId) return;
       if (room.players.length < 2) return sendTo(ws, {type:'error', code:'NEED_MORE_PLAYERS'});
-      if (msg.gameMode)            room.gameMode   = msg.gameMode;
-      if (msg.penalty !== undefined) room.penalty  = msg.penalty;
-      if (msg.categories)          room.categories = msg.categories;
+      if (msg.gameMode)              room.gameMode   = msg.gameMode;
+      if (msg.penalty !== undefined) room.penalty    = msg.penalty;
+      if (msg.categories)            room.categories = msg.categories;
       room.started = true; room.currentIdx = 0; room.round = 1; room.turn = 1; room.usedCards = {};
       room.players.forEach(p => { p.score = 0; });
       broadcast(room, {type:'game_started', state:roomPublicState(room)});
       break;
     }
+
     case 'pick_type': {
       const room = rooms.get(ws.roomCode);
       if (!room || !room.started) return;
@@ -280,18 +321,18 @@ function handleMessage(ws, msg) {
       broadcast(room, {type:'type_picked', cardType:msg.cardType, cardText:msg.cardText, playerId:ws.clientId});
       break;
     }
+
     case 'task_result': {
       const room = rooms.get(ws.roomCode);
       if (!room || !room.started) return;
       if (room.players[room.currentIdx]?.id !== ws.clientId) return;
       const delta = msg.result === 'complete' ? 2 : -1;
       room.players[room.currentIdx].score += delta;
-      room.turn++;
-      if (room.turn > room.players.length) { room.turn = 1; room.round++; }
-      room.currentIdx = (room.currentIdx + 1) % room.players.length;
+      advanceRoomTurn(room);
       broadcast(room, {type:'turn_result', result:msg.result, delta, state:roomPublicState(room)});
       break;
     }
+
     case 'reaction': {
       const room = rooms.get(ws.roomCode);
       if (!room) return;
@@ -299,11 +340,30 @@ function handleMessage(ws, msg) {
       if (player) broadcast(room, {type:'reaction', emoji:msg.emoji, name:player.name, avatar:player.avatar}, ws.clientId);
       break;
     }
-    case 'leave_room': handleDisconnect(ws); break;
-    case 'ping': sendTo(ws, {type:'pong'}); break;
+
+    case 'leave_room':
+      handleDisconnect(ws);
+      break;
+
+    case 'ping':
+      sendTo(ws, {type:'pong'});
+      break;
   }
 }
 
+/* ============================================
+   ADVANCE TURN (вынесено для переиспользования)
+============================================ */
+function advanceRoomTurn(room) {
+  room.turn++;
+  if (room.turn > room.players.length) { room.turn = 1; room.round++; }
+  room.currentIdx = (room.currentIdx + 1) % room.players.length;
+}
+
+/* ============================================
+   DISCONNECT HANDLER
+   FIX: grace period 90 сек, автопропуск хода через 15 сек
+============================================ */
 function handleDisconnect(ws) {
   const code = ws.roomCode;
   if (!code) return;
@@ -312,6 +372,8 @@ function handleDisconnect(ws) {
   const idx = room.players.findIndex(p => p.id === ws.clientId);
   if (idx === -1) return;
   const player = room.players[idx];
+
+  // --- Лобби: удаляем игрока сразу ---
   if (!room.started) {
     room.players.splice(idx, 1);
     if (!room.players.length) { rooms.delete(code); return; }
@@ -322,13 +384,58 @@ function handleDisconnect(ws) {
     broadcast(room, {type:'player_left', name:player.name, state:roomPublicState(room)});
     return;
   }
+
+  // --- Игра запущена: даём 90 сек на реконнект ---
   player.ws = null;
   broadcast(room, {type:'player_offline', name:player.name, playerId:ws.clientId});
+  console.log(`[Room ${code}] ${player.name} offline — grace period 90s`);
+
+  // Если сейчас ход этого игрока — через 15 сек автопропуск
+  if (room.players[room.currentIdx]?.id === ws.clientId) {
+    room._autoSkipTimers[ws.clientId] = setTimeout(() => {
+      const r = rooms.get(code);
+      if (!r) return;
+      const p = r.players[r.currentIdx];
+      // Пропускаем только если это всё ещё его ход и он offline
+      if (!p || p.id !== ws.clientId || (p.ws?.readyState === WebSocket.OPEN)) return;
+      console.log(`[Room ${code}] Auto-skip offline player ${p.name}`);
+      p.score -= 1;
+      advanceRoomTurn(r);
+      broadcast(r, {type:'turn_result', result:'disconnect_skip', delta:-1, state:roomPublicState(r)});
+    }, 15000);
+  }
+
+  // Через 90 сек — если не вернулся, удаляем из комнаты
+  room._disconnectTimers[ws.clientId] = setTimeout(() => {
+    const r = rooms.get(code);
+    if (!r) return;
+    const pi = r.players.findIndex(p => p.id === ws.clientId);
+    if (pi === -1) return;
+    const offline = r.players[pi];
+    // Если успел переподключиться — WS будет живой
+    if (offline.ws?.readyState === WebSocket.OPEN) return;
+    console.log(`[Room ${code}] ${offline.name} removed after timeout`);
+    r.players.splice(pi, 1);
+    if (!r.players.length) { rooms.delete(code); return; }
+    // Корректируем currentIdx если надо
+    if (r.currentIdx >= r.players.length) r.currentIdx = 0;
+    if (r.hostId === ws.clientId && r.players.length) {
+      r.hostId = r.players[0].id;
+      broadcast(r, {type:'host_changed', newHostId:r.hostId});
+    }
+    broadcast(r, {type:'player_left', name:offline.name, state:roomPublicState(r)});
+  }, 90000);
+
+  // Если все offline — удаляем комнату через 10 минут
   const allOffline = room.players.every(p => !p.ws || p.ws.readyState !== WebSocket.OPEN);
-  if (allOffline) setTimeout(() => {
-    if (rooms.has(code) && rooms.get(code).players.every(p => !p.ws || p.ws.readyState !== WebSocket.OPEN))
-      rooms.delete(code);
-  }, 10*60*1000);
+  if (allOffline) {
+    setTimeout(() => {
+      const r = rooms.get(code);
+      if (!r) return;
+      const anyOnline = r.players.some(p => p.ws?.readyState === WebSocket.OPEN);
+      if (!anyOnline) { console.log(`[Room ${code}] All offline — deleting`); rooms.delete(code); }
+    }, 10 * 60 * 1000);
+  }
 }
 
 /* ============================================
