@@ -5364,7 +5364,15 @@ function quickDemo() {
 let _soloType = 'truth';
 function soloCard(type) {
   _soloType = type;
-  const card = drawCard(type, soloCats);
+  // Solo always uses real cards regardless of demo mode
+  const pool = [];
+  soloCats.forEach(cat => {
+    const bucket = CARDS[type]?.[cat]?.[lang];
+    if (bucket) pool.push(...bucket);
+  });
+  if (!pool.length) { toast(lang==='ru'?'Нет карточек!':'No cards!'); return; }
+  const card = pool[Math.floor(Math.random() * pool.length)];
+
   const stage = document.getElementById('soloCardStage');
   const btns  = document.getElementById('soloCardBtns');
   const el    = document.getElementById('soloCard');
