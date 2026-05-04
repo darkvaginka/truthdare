@@ -4612,17 +4612,31 @@ function handleServerMsg(msg) {
     case 'rejoined': {
       _myId = msg.myId;
       applyServerState(msg.state);
+ 
       const isHost = msg.type === 'room_created' || msg.state.players[0]?.id === _myId;
       state.isHost = isHost;
       state.roomCode = msg.state.code;
+ 
+      // FIX: сохраняем код для восстановления после реконнекта
+      _savedRoomCode  = msg.state.code;
+      _wsReconnecting = false;
+      showReconnectOverlay(false);
+ 
       document.getElementById('lobbyCode').textContent = msg.state.code;
-      document.getElementById('lobbyCount').textContent = ` ${msg.state.players.length}/${msg.state.maxPlayers}`;
+      document.getElementById('lobbyCount').textContent =
+        ` ${msg.state.players.length}/${msg.state.maxPlayers}`;
       document.getElementById('hostControls').style.display = isHost ? '' : 'none';
-      document.getElementById('guestWait').style.display = isHost ? 'none' : '';
-      // Sync lobby category grid with actual room categories
+      document.getElementById('guestWait').style.display    = isHost ? 'none' : '';
+ 
+      // FIX: rejoined во время игры — восстанавливаем игровой экран
+      if (msg.type === 'rejoined' && msg.state.started) {
+        initGameScreen();
+        break;
+      }
+ 
       renderCatGrid('lobbyCatGrid', GAME.categories, (id, sel) => {
         if (sel) { if (!GAME.categories.includes(id)) GAME.categories.push(id); }
-        else { const i=GAME.categories.indexOf(id); if(i>-1&&GAME.categories.length>1) GAME.categories.splice(i,1); }
+        else { const i = GAME.categories.indexOf(id); if (i > -1 && GAME.categories.length > 1) GAME.categories.splice(i, 1); }
         renderCatGrid('lobbyCatGrid', GAME.categories, null);
         if (WS_URL) wsSend({ type: 'update_settings', categories: GAME.categories });
       });
