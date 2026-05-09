@@ -15,6 +15,20 @@ const PORT      = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 
 /* ============================================
+   LOGGER
+============================================ */
+function _log(level, args) {
+  const ts = new Date().toISOString();
+  const out = level === 'ERROR' ? console.error : (level === 'WARN' ? console.warn : console.log);
+  out(`[${ts}] [${level}]`, ...args);
+}
+const logger = {
+  info:  (...a) => _log('INFO',  a),
+  warn:  (...a) => _log('WARN',  a),
+  error: (...a) => _log('ERROR', a),
+};
+
+/* ============================================
    POSTGRESQL
 ============================================ */
 const pool = new Pool({
@@ -31,7 +45,7 @@ async function initDB() {
       expires_at  BIGINT
     )
   `);
-  console.log('[DB] PostgreSQL ready');
+  logger.info('[DB] PostgreSQL ready');
 }
 
 async function getPremiumStatus(userId) {
@@ -44,7 +58,7 @@ async function getPremiumStatus(userId) {
     if (expiresAt && Date.now() < expiresAt) return { isPremium: true, plan: 'month', expiresAt };
     return { isPremium: false, plan: 'expired', expiresAt };
   } catch(e) {
-    console.error('[DB] getPremiumStatus error:', e.message);
+    logger.error('[DB] getPremiumStatus error:', e.message);
     return { isPremium: false };
   }
 }
@@ -73,7 +87,7 @@ async function activatePremium(userId, plan) {
           END
   `, [uid, plan, now, expiresAt]);
 
-  console.log(`[Premium] Activated uid=${uid} plan=${plan} expires=${expiresAt}`);
+  logger.info(`[Premium] Activated uid=${uid} plan=${plan} expires=${expiresAt}`);
   return getPremiumStatus(uid);
 }
 
@@ -99,7 +113,11 @@ const PREMIUM_PLANS = {
 app.post('/create-invoice', async (req, res) => {
   const { plan, lang, userId } = req.body;
   const p = PREMIUM_PLANS[plan];
-  if (!p) return res.status(400).json({ error: 'Invalid plan' });
+  if (!p) {
+    logger.warn(`[Payment] Invalid plan requested uid=${userId} plan=${plan}`);
+    return res.status(400).json({ error: 'Invalid plan' });
+  }
+  logger.info(`[Payment] Invoice requested uid=${userId} plan=${plan} stars=${p.stars}`);
 
   const isRu = lang === 'ru';
   let description = isRu
@@ -129,9 +147,14 @@ app.post('/create-invoice', async (req, res) => {
       }),
     });
     const data = await resp.json();
-    if (!data.ok) return res.status(500).json({ error: data.description });
+    if (!data.ok) {
+      logger.error(`[Payment] createInvoiceLink failed uid=${userId} plan=${plan} reason=${data.description}`);
+      return res.status(500).json({ error: data.description });
+    }
+    logger.info(`[Payment] Invoice created uid=${userId} plan=${plan}`);
     res.json({ invoiceLink: data.result });
   } catch(e) {
+    logger.error(`[Payment] Invoice creation error uid=${userId} plan=${plan}:`, e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -174,9 +197,14 @@ function createRoom(hostWs, hostName, hostAvatar, categories, maxPlayers, gameMo
   };
   rooms.set(code, room);
   hostWs.roomCode = code;
+  logger.info(`[Room ${code}] Created host="${hostName}" categories=[${(categories||[]).join(',')}] mode=${gameMode} max=${maxPlayers} totalRooms=${rooms.size}`);
   // Автоудаление комнаты через 4 часа
   setTimeout(() => {
-    if (rooms.has(code)) { broadcast(room, {type:'room_expired'}); rooms.delete(code); }
+    if (rooms.has(code)) {
+      logger.warn(`[Room ${code}] Expired after 4h — deleting`);
+      broadcast(room, {type:'room_expired'});
+      rooms.delete(code);
+    }
   }, 4*60*60*1000);
   return room;
 }
@@ -210,16 +238,21 @@ const wss = new WebSocketServer({ server, verifyClient: () => true });
 wss.on('connection', (ws) => {
   ws.clientId = crypto.randomUUID();
   ws.isAlive   = true;
+  logger.info(`[WS] Client connected id=${ws.clientId} totalClients=${wss.clients.size}`);
   ws.on('pong', () => { ws.isAlive = true; });
-  ws.on('message', (raw) => { try { handleMessage(ws, JSON.parse(raw)); } catch(e) { console.error('[WS] msg error', e.message); } });
+  ws.on('message', (raw) => { try { handleMessage(ws, JSON.parse(raw)); } catch(e) { logger.error(`[WS] msg parse error id=${ws.clientId}:`, e.message); } });
   ws.on('close', () => handleDisconnect(ws));
-  ws.on('error', (e) => console.error('[WS]', e.message));
+  ws.on('error', (e) => logger.error(`[WS] socket error id=${ws.clientId}:`, e.message));
 });
 
 // Heartbeat — проверяем живые соединения каждые 30 сек
 const heartbeat = setInterval(() => {
   wss.clients.forEach(ws => {
-    if (!ws.isAlive) { ws.terminate(); return; }
+    if (!ws.isAlive) {
+      logger.warn(`[WS] Heartbeat timeout — terminating id=${ws.clientId}`);
+      ws.terminate();
+      return;
+    }
     ws.isAlive = false; ws.ping();
   });
 }, 30000);
@@ -246,8 +279,12 @@ function handleMessage(ws, msg) {
     case 'join_room': {
       const code = msg.code?.toUpperCase();
       const room = rooms.get(code);
-      if (!room) return sendTo(ws, {type:'error', code:'ROOM_NOT_FOUND'});
+      if (!room) {
+        logger.warn(`[Room ${code}] Join failed — not found name="${msg.name}"`);
+        return sendTo(ws, {type:'error', code:'ROOM_NOT_FOUND'});
+      }
       if (room.started && !room.players.find(p => p.name === msg.name)) {
+        logger.warn(`[Room ${code}] Join rejected — game in progress name="${msg.name}"`);
         return sendTo(ws, {type:'error', code:'GAME_STARTED'});
       }
 
@@ -271,12 +308,13 @@ function handleMessage(ws, msg) {
         ws.roomCode = code;
         sendTo(ws, {type:'rejoined', state:roomPublicState(room), myId:ws.clientId});
         broadcast(room, {type:'player_rejoined', name:existing.name}, ws.clientId);
-        console.log(`[Room ${code}] ${existing.name} rejoined`);
+        logger.info(`[Room ${code}] Player rejoined name="${existing.name}" id=${ws.clientId}`);
         return;
       }
 
       // Новый игрок
       if (!room.started && room.players.length >= room.maxPlayers) {
+        logger.warn(`[Room ${code}] Join rejected — room full name="${msg.name}" max=${room.maxPlayers}`);
         return sendTo(ws, {type:'error', code:'ROOM_FULL'});
       }
       const player = { id:ws.clientId, name:msg.name, avatar:msg.avatar||'😀', score:0, ws };
@@ -288,6 +326,7 @@ function handleMessage(ws, msg) {
         player:{ id:ws.clientId, name:msg.name, avatar:msg.avatar||'😀', score:0 },
         state:roomPublicState(room),
       }, ws.clientId);
+      logger.info(`[Room ${code}] Player joined name="${msg.name}" id=${ws.clientId} players=${room.players.length}/${room.maxPlayers}`);
       break;
     }
 
@@ -311,6 +350,7 @@ function handleMessage(ws, msg) {
       room.started = true; room.currentIdx = 0; room.round = 1; room.turn = 1; room.usedCards = {};
       room.players.forEach(p => { p.score = 0; });
       broadcast(room, {type:'game_started', state:roomPublicState(room)});
+      logger.info(`[Room ${room.code}] Game started players=${room.players.length} mode=${room.gameMode} categories=[${room.categories.join(',')}]`);
       break;
     }
 
@@ -376,19 +416,25 @@ function handleDisconnect(ws) {
   // --- Лобби: удаляем игрока сразу ---
   if (!room.started) {
     room.players.splice(idx, 1);
-    if (!room.players.length) { rooms.delete(code); return; }
+    if (!room.players.length) {
+      logger.info(`[Room ${code}] Empty after lobby leave — deleting (totalRooms=${rooms.size - 1})`);
+      rooms.delete(code);
+      return;
+    }
     if (room.hostId === ws.clientId) {
       room.hostId = room.players[0].id;
       broadcast(room, {type:'host_changed', newHostId:room.hostId});
+      logger.info(`[Room ${code}] Host changed to name="${room.players[0].name}"`);
     }
     broadcast(room, {type:'player_left', name:player.name, state:roomPublicState(room)});
+    logger.info(`[Room ${code}] Player left lobby name="${player.name}" remaining=${room.players.length}`);
     return;
   }
 
   // --- Игра запущена: даём 90 сек на реконнект ---
   player.ws = null;
   broadcast(room, {type:'player_offline', name:player.name, playerId:ws.clientId});
-  console.log(`[Room ${code}] ${player.name} offline — grace period 90s`);
+  logger.warn(`[Room ${code}] Player offline name="${player.name}" — grace period 90s`);
 
   // Если сейчас ход этого игрока — через 15 сек автопропуск
   if (room.players[room.currentIdx]?.id === ws.clientId) {
@@ -398,7 +444,7 @@ function handleDisconnect(ws) {
       const p = r.players[r.currentIdx];
       // Пропускаем только если это всё ещё его ход и он offline
       if (!p || p.id !== ws.clientId || (p.ws?.readyState === WebSocket.OPEN)) return;
-      console.log(`[Room ${code}] Auto-skip offline player ${p.name}`);
+      logger.warn(`[Room ${code}] Auto-skip offline player name="${p.name}" (-1 score)`);
       p.score -= 1;
       advanceRoomTurn(r);
       broadcast(r, {type:'turn_result', result:'disconnect_skip', delta:-1, state:roomPublicState(r)});
@@ -414,14 +460,19 @@ function handleDisconnect(ws) {
     const offline = r.players[pi];
     // Если успел переподключиться — WS будет живой
     if (offline.ws?.readyState === WebSocket.OPEN) return;
-    console.log(`[Room ${code}] ${offline.name} removed after timeout`);
+    logger.info(`[Room ${code}] Player removed after 90s timeout name="${offline.name}"`);
     r.players.splice(pi, 1);
-    if (!r.players.length) { rooms.delete(code); return; }
+    if (!r.players.length) {
+      logger.info(`[Room ${code}] Empty after timeout — deleting (totalRooms=${rooms.size - 1})`);
+      rooms.delete(code);
+      return;
+    }
     // Корректируем currentIdx если надо
     if (r.currentIdx >= r.players.length) r.currentIdx = 0;
     if (r.hostId === ws.clientId && r.players.length) {
       r.hostId = r.players[0].id;
       broadcast(r, {type:'host_changed', newHostId:r.hostId});
+      logger.info(`[Room ${code}] Host changed to name="${r.players[0].name}"`);
     }
     broadcast(r, {type:'player_left', name:offline.name, state:roomPublicState(r)});
   }, 90000);
@@ -433,7 +484,7 @@ function handleDisconnect(ws) {
       const r = rooms.get(code);
       if (!r) return;
       const anyOnline = r.players.some(p => p.ws?.readyState === WebSocket.OPEN);
-      if (!anyOnline) { console.log(`[Room ${code}] All offline — deleting`); rooms.delete(code); }
+      if (!anyOnline) { logger.warn(`[Room ${code}] All offline 10min — deleting (totalRooms=${rooms.size - 1})`); rooms.delete(code); }
     }, 10 * 60 * 1000);
   }
 }
@@ -446,10 +497,12 @@ async function handleBotWebhook(req, res) {
   const update = req.body;
 
   if (update.pre_checkout_query) {
+    const pq = update.pre_checkout_query;
+    logger.info(`[Payment] pre_checkout_query uid=${pq.from?.id} payload=${pq.invoice_payload} amount=${pq.total_amount} ${pq.currency}`);
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerPreCheckoutQuery`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pre_checkout_query_id: update.pre_checkout_query.id, ok: true }),
+      body: JSON.stringify({ pre_checkout_query_id: pq.id, ok: true }),
     });
     return;
   }
@@ -458,6 +511,8 @@ async function handleBotWebhook(req, res) {
     const userId  = String(update.message.from.id);
     const payload = update.message.successful_payment.invoice_payload;
     const plan    = payload.includes('forever') ? 'forever' : 'month';
+    const amount  = update.message.successful_payment.total_amount;
+    logger.info(`[Payment] successful_payment uid=${userId} plan=${plan} amount=${amount} ⭐ payload=${payload}`);
     const status  = await activatePremium(userId, plan);
     const expireStr = status.expiresAt
       ? new Date(status.expiresAt).toLocaleDateString('ru-RU') : null;
@@ -516,7 +571,7 @@ async function botSend(chatId, payload) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, ...payload }),
     });
-  } catch(e) { console.error('[Bot]', e.message); }
+  } catch(e) { logger.error('[Bot] sendMessage error:', e.message); }
 }
 
 /* ============================================
@@ -524,10 +579,11 @@ async function botSend(chatId, payload) {
 ============================================ */
 initDB().then(() => {
   server.listen(PORT, () => {
-    console.log(`\n🔥 ToD Server on port ${PORT}`);
-    console.log(`   Bot: ${BOT_TOKEN ? '✅' : '❌ not set'}\n`);
+    logger.info(`[Server] ToD Server started on port ${PORT}`);
+    logger.info(`[Server] Bot token: ${BOT_TOKEN ? 'configured' : 'NOT SET'}`);
+    logger.info(`[Server] Webapp URL: ${process.env.WEBAPP_URL || 'https://truthdare-dusky.vercel.app (default)'}`);
   });
 }).catch(e => {
-  console.error('[DB] Init failed:', e.message);
+  logger.error('[DB] Init failed:', e.message);
   process.exit(1);
 });
