@@ -51,13 +51,6 @@ async function initDB() {
 async function getPremiumStatus(userId) {
   try {
     const res = await pool.query('SELECT * FROM premium_users WHERE user_id = $1', [String(userId)]);
-    console.log('[DEBUG getPremiumStatus]', {
-      userId,
-      userIdType: typeof userId,
-      rowCount: res.rows.length,
-      plan: res.rows[0]?.plan,
-      expiresAt: res.rows[0]?.expires_at,
-    });
     if (!res.rows.length) return { isPremium: false };
     const r = res.rows[0];
     if (r.plan === 'forever') return { isPremium: true, plan: 'forever', expiresAt: null };
@@ -77,10 +70,6 @@ async function activatePremium(userId, plan) {
 
   if (plan === 'month') {
     const existing = await getPremiumStatus(uid);
-    console.log('[DEBUG call:activatePremium/month-base] uid=' + uid, 'returned=', existing,
-      '→ decision:', (existing.isPremium && existing.plan === 'month' && existing.expiresAt > now)
-        ? `extend from existing expiresAt=${existing.expiresAt}`
-        : `start fresh from now=${now} (isPremium=${existing.isPremium}, plan=${existing.plan})`);
     const base = (existing.isPremium && existing.plan === 'month' && existing.expiresAt > now)
       ? existing.expiresAt : now;
     expiresAt = base + 30 * 24 * 60 * 60 * 1000;
@@ -100,8 +89,6 @@ async function activatePremium(userId, plan) {
 
   logger.info(`[Premium] Activated uid=${uid} plan=${plan} expires=${expiresAt}`);
   const finalStatus = await getPremiumStatus(uid);
-  console.log('[DEBUG call:activatePremium/return] uid=' + uid, 'returned=', finalStatus,
-    `→ decision: returning to caller, isPremium=${finalStatus.isPremium} will be sent to admin/webhook response`);
   return finalStatus;
 }
 
@@ -140,10 +127,6 @@ app.post('/create-invoice', async (req, res) => {
 
   if (plan === 'month' && userId) {
     const status = await getPremiumStatus(userId);
-    console.log('[DEBUG call:/create-invoice] uid=' + userId, 'returned=', status,
-      '→ decision:', (status.isPremium && status.plan === 'month')
-        ? `customize description as "extends to" (active monthly sub, expiresAt=${status.expiresAt})`
-        : `keep default description (isPremium=${status.isPremium}, plan=${status.plan})`);
     if (status.isPremium && status.plan === 'month') {
       const d = new Date(status.expiresAt + 30*24*60*60*1000);
       description = isRu
@@ -181,8 +164,6 @@ app.get('/premium-status', async (req, res) => {
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: 'No userId' });
   const status = await getPremiumStatus(userId);
-  console.log('[DEBUG call:GET /premium-status] uid=' + userId, 'returned=', status,
-    `→ decision: sending JSON to client as-is, frontend will set isPremium=${status.isPremium}`);
   res.json(status);
 });
 
@@ -557,10 +538,6 @@ async function handleBotWebhook(req, res) {
     await botSend(chat.id, botHelpMessage());
   } else if (text === '/premium') {
     const status = await getPremiumStatus(String(from.id));
-    console.log('[DEBUG call:bot /premium] uid=' + from.id, 'returned=', status,
-      '→ decision:', status.isPremium
-        ? `send "Premium активен" message (expiresAt=${status.expiresAt})`
-        : `send "Premium не активен" message`);
     const expireStr = status.expiresAt
       ? `до ${new Date(status.expiresAt).toLocaleDateString('ru-RU')}` : 'навсегда';
     await botSend(chat.id, {
