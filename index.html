@@ -4781,6 +4781,18 @@ function applyServerState(serverState) {
   }
   GAME.scores      = {};
   GAME.players.forEach(p => { GAME.scores[p.name] = p.score; });
+
+  // Sync card-in-flight (for rejoin during a watcher's turn)
+  GAME.currentCard = serverState.currentCard || null;
+  if (GAME.currentCard) {
+    const wc = document.getElementById('watchCard');
+    if (wc) {
+      wc.className = `game-card ${GAME.currentCard.type}-card`;
+      document.getElementById('watchCardType').textContent =
+        GAME.currentCard.type === 'truth' ? t('truth').toUpperCase() : t('dare').toUpperCase();
+      document.getElementById('watchCardText').textContent = GAME.currentCard.text || '...';
+    }
+  }
 }
 
 /* ============================================
@@ -5177,9 +5189,14 @@ function initGameScreen() {
 function renderWatchScreen(p) {
   document.getElementById('watchAv').textContent   = p.avatar;
   document.getElementById('watchName').textContent = p.name;
-  // Reset to waiting state
-  document.getElementById('watchWaiting').style.display  = 'block';
-  document.getElementById('watchCardArea').style.display = 'none';
+  // If a card is already in flight (rejoin mid-turn) — keep it visible
+  if (GAME.currentCard) {
+    document.getElementById('watchWaiting').style.display  = 'none';
+    document.getElementById('watchCardArea').style.display = 'block';
+  } else {
+    document.getElementById('watchWaiting').style.display  = 'block';
+    document.getElementById('watchCardArea').style.display = 'none';
+  }
   go('s-watch');
 }
 

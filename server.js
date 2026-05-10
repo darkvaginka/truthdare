@@ -51,6 +51,13 @@ async function initDB() {
 async function getPremiumStatus(userId) {
   try {
     const res = await pool.query('SELECT * FROM premium_users WHERE user_id = $1', [String(userId)]);
+    console.log('[DEBUG getPremiumStatus]', {
+      userId,
+      userIdType: typeof userId,
+      rowCount: res.rows.length,
+      plan: res.rows[0]?.plan,
+      expiresAt: res.rows[0]?.expires_at,
+    });
     if (!res.rows.length) return { isPremium: false };
     const r = res.rows[0];
     if (r.plan === 'forever') return { isPremium: true, plan: 'forever', expiresAt: null };
@@ -191,7 +198,7 @@ function createRoom(hostWs, hostName, hostAvatar, categories, maxPlayers, gameMo
     penalty: penalty||null, categories: categories||['friends','family'],
     hostIsPremium: hostIsPremium||false,
     players: [{ id: hostWs.clientId, name: hostName, avatar: hostAvatar, score: 0, ws: hostWs }],
-    started: false, currentIdx: 0, round: 1, turn: 1, usedCards: {}, createdAt: Date.now(),
+    started: false, currentIdx: 0, round: 1, turn: 1, usedCards: {}, currentCard: null, createdAt: Date.now(),
     _disconnectTimers: {},  // таймеры реконнекта по clientId
     _autoSkipTimers: {},    // таймеры автопропуска хода
   };
@@ -225,6 +232,7 @@ function roomPublicState(room) {
     code: room.code, gameMode: room.gameMode, penalty: room.penalty,
     categories: room.categories, maxPlayers: room.maxPlayers, started: room.started,
     currentIdx: room.currentIdx, round: room.round, turn: room.turn,
+    currentCard: room.currentCard || null,
     hostIsPremium: room.hostIsPremium || false,
     players: room.players.map(p => ({ id:p.id, name:p.name, avatar:p.avatar, score:p.score })),
   };
@@ -348,6 +356,7 @@ function handleMessage(ws, msg) {
       if (msg.penalty !== undefined) room.penalty    = msg.penalty;
       if (msg.categories)            room.categories = msg.categories;
       room.started = true; room.currentIdx = 0; room.round = 1; room.turn = 1; room.usedCards = {};
+      room.currentCard = null;
       room.players.forEach(p => { p.score = 0; });
       broadcast(room, {type:'game_started', state:roomPublicState(room)});
       logger.info(`[Room ${room.code}] Game started players=${room.players.length} mode=${room.gameMode} categories=[${room.categories.join(',')}]`);
@@ -358,6 +367,7 @@ function handleMessage(ws, msg) {
       const room = rooms.get(ws.roomCode);
       if (!room || !room.started) return;
       if (room.players[room.currentIdx]?.id !== ws.clientId) return;
+      room.currentCard = { type: msg.cardType, text: msg.cardText, playerId: ws.clientId };
       broadcast(room, {type:'type_picked', cardType:msg.cardType, cardText:msg.cardText, playerId:ws.clientId});
       break;
     }
@@ -368,6 +378,7 @@ function handleMessage(ws, msg) {
       if (room.players[room.currentIdx]?.id !== ws.clientId) return;
       const delta = msg.result === 'complete' ? 2 : -1;
       room.players[room.currentIdx].score += delta;
+      room.currentCard = null;
       advanceRoomTurn(room);
       broadcast(room, {type:'turn_result', result:msg.result, delta, state:roomPublicState(room)});
       break;

@@ -116,3 +116,9 @@ npm run dev    # dev с hot-reload: node --watch server.js
 - Любая правка строки в UI должна попасть в обе локали в `T.ru` и `T.en`. Новые карточки — в обе локали в `CARDS[type][cat]`.
 - Любая правка протокола WebSocket требует синхронных изменений в `handleMessage` (`server.js`) и `handleServerMsg` (`index.html`).
 - Локально нет npm-зависимостей у фронта — править index.html напрямую, без билда.
+
+## Запуск агента с правами записи
+claude --allowedTools "Edit,Write,Read" -p "задача"
+
+## Никогда не использовать
+--dangerously-skip-permissions (даёт доступ ко всей системе)
