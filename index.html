@@ -5998,6 +5998,11 @@ if (tgApp) {
     document.getElementById('settingsName').textContent = name;
     document.getElementById('hostName').value = name;
     document.getElementById('guestName').value = name;
+     // Проверка премиума при старте ← ДОБАВИТЬ СЮДА
+    fetch(`${BACKEND_URL}/premium-status?userId=${user.id}`)
+      .then(r => r.json())
+      .then(d => { if (d.isPremium) activatePremium(d.expiresAt, d.plan); })
+      .catch(() => {});
   }
   tgApp.BackButton.onClick(() => {
     const backMap = {
