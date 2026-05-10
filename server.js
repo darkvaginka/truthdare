@@ -111,14 +111,9 @@ const PREMIUM_PLANS = {
   month:   { stars: 49,  label: 'Premium на 30 дней', labelEn: 'Premium 30 days'  },
 };
 
-app.post('/create-invoice', async (req, res) => {
-  const { plan, lang, userId } = req.body;
+async function createPremiumInvoiceLink(plan, userId, lang) {
   const p = PREMIUM_PLANS[plan];
-  if (!p) {
-    logger.warn(`[Payment] Invalid plan requested uid=${userId} plan=${plan}`);
-    return res.status(400).json({ error: 'Invalid plan' });
-  }
-  logger.info(`[Payment] Invoice requested uid=${userId} plan=${plan} stars=${p.stars}`);
+  if (!p) return { error: 'Invalid plan' };
 
   const isRu = lang === 'ru';
   let description = isRu
@@ -150,14 +145,26 @@ app.post('/create-invoice', async (req, res) => {
     const data = await resp.json();
     if (!data.ok) {
       logger.error(`[Payment] createInvoiceLink failed uid=${userId} plan=${plan} reason=${data.description}`);
-      return res.status(500).json({ error: data.description });
+      return { error: data.description };
     }
-    logger.info(`[Payment] Invoice created uid=${userId} plan=${plan}`);
-    res.json({ invoiceLink: data.result });
+    return { link: data.result };
   } catch(e) {
     logger.error(`[Payment] Invoice creation error uid=${userId} plan=${plan}:`, e.message);
-    res.status(500).json({ error: e.message });
+    return { error: e.message };
   }
+}
+
+app.post('/create-invoice', async (req, res) => {
+  const { plan, lang, userId } = req.body;
+  if (!PREMIUM_PLANS[plan]) {
+    logger.warn(`[Payment] Invalid plan requested uid=${userId} plan=${plan}`);
+    return res.status(400).json({ error: 'Invalid plan' });
+  }
+  logger.info(`[Payment] Invoice requested uid=${userId} plan=${plan} stars=${PREMIUM_PLANS[plan].stars}`);
+  const result = await createPremiumInvoiceLink(plan, userId, lang);
+  if (result.error) return res.status(500).json({ error: result.error });
+  logger.info(`[Payment] Invoice created uid=${userId} plan=${plan}`);
+  res.json({ invoiceLink: result.link });
 });
 
 app.get('/premium-status', async (req, res) => {
@@ -501,6 +508,39 @@ async function handleBotWebhook(req, res) {
   res.json({ ok: true });
   const update = req.body;
 
+  if (update.callback_query) {
+    const cq = update.callback_query;
+    const userId = String(cq.from.id);
+    const chatId = cq.message?.chat?.id;
+    const data = cq.data;
+    logger.info(`[Bot] callback_query uid=${userId} data=${data}`);
+
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: cq.id }),
+    }).catch(e => logger.error('[Bot] answerCallbackQuery error:', e.message));
+
+    if (data === 'show_premium') {
+      await botSend(chatId, await botPremiumMessage(userId));
+    } else if (data === 'buy_forever' || data === 'buy_month') {
+      const plan = data === 'buy_forever' ? 'forever' : 'month';
+      const result = await createPremiumInvoiceLink(plan, userId, 'ru');
+      if (result.error) {
+        await botSend(chatId, { text: '❌ Не удалось создать счёт. Попробуй позже.' });
+      } else {
+        const p = PREMIUM_PLANS[plan];
+        await botSend(chatId, {
+          text: `⭐ ${p.label} — ${p.stars} Stars\n\nНажми кнопку чтобы оплатить:`,
+          reply_markup: {
+            inline_keyboard: [[{ text: `Оплатить ${p.stars} ⭐`, url: result.link }]],
+          },
+        });
+      }
+    }
+    return;
+  }
+
   if (update.pre_checkout_query) {
     const pq = update.pre_checkout_query;
     logger.info(`[Payment] pre_checkout_query uid=${pq.from?.id} payload=${pq.invoice_payload} amount=${pq.total_amount} ${pq.currency}`);
@@ -537,14 +577,7 @@ async function handleBotWebhook(req, res) {
   } else if (text === '/help') {
     await botSend(chat.id, botHelpMessage());
   } else if (text === '/premium') {
-    const status = await getPremiumStatus(String(from.id));
-    const expireStr = status.expiresAt
-      ? `до ${new Date(status.expiresAt).toLocaleDateString('ru-RU')}` : 'навсегда';
-    await botSend(chat.id, {
-      text: status.isPremium
-        ? `⭐ Premium активен ${expireStr}!`
-        : '❌ Premium не активен',
-    });
+    await botSend(chat.id, await botPremiumMessage(from.id));
   }
 }
 
@@ -553,10 +586,38 @@ function botStartMessage() {
     text: '🔥 *Правда или Действие*\n\nНажми кнопку ниже чтобы начать игру!',
     parse_mode: 'Markdown',
     reply_markup: {
-      inline_keyboard: [[{
-        text: '🎮 Открыть игру',
-        web_app: { url: process.env.WEBAPP_URL || 'https://truthdare-dusky.vercel.app' },
-      }]],
+      inline_keyboard: [
+        [{ text: '🎮 Играть',  web_app: { url: process.env.WEBAPP_URL || 'https://truthdare-dusky.vercel.app' } }],
+        [{ text: '⭐ Премиум', callback_data: 'show_premium' }],
+      ],
+    },
+  };
+}
+
+async function botPremiumMessage(userId) {
+  const status = await getPremiumStatus(String(userId));
+  if (status.isPremium) {
+    const expireStr = status.expiresAt
+      ? `до ${new Date(status.expiresAt).toLocaleDateString('ru-RU')}` : 'навсегда';
+    return {
+      text: `⭐ *Premium активен ${expireStr}!*\n\nВсе категории и до 10 игроков уже доступны.`,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{
+          text: '🎮 Играть',
+          web_app: { url: process.env.WEBAPP_URL || 'https://truthdare-dusky.vercel.app' },
+        }]],
+      },
+    };
+  }
+  return {
+    text: '⭐ *Premium*\n\n• Все 7 категорий\n• До 10 игроков в комнате\n• Без рекламы\n\nВыбери план:',
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '💎 Купить навсегда — 299 ⭐', callback_data: 'buy_forever' }],
+        [{ text: '📅 Купить на месяц — 49 ⭐',  callback_data: 'buy_month'   }],
+      ],
     },
   };
 }
